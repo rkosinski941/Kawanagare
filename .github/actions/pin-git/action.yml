@@ -1,0 +1,86 @@
+name: Pin Git 2.49.1
+description: >-
+  Install upstream Git 2.49.1 on Linux and Git for Windows 2.49.1.windows.1
+  on Windows, and put that git first on PATH.
+
+runs:
+  using: composite
+  steps:
+    - name: Restore pinned Git
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.os == 'Windows' && 'C:/Git2491' || format('{0}/git-2.49.1', runner.tool_cache) }}
+        key: git-2.49.1-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Build Git 2.49.1
+      if: runner.os != 'Windows' && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        PREFIX: ${{ runner.tool_cache }}/git-2.49.1
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev libssl-dev ca-certificates curl
+        tmp="$(mktemp -d)"
+        curl -fsSL -o "$tmp/git.tar.gz" https://mirrors.edge.kernel.org/pub/software/scm/git/git-2.49.1.tar.gz
+        echo "84a8383ffc77146133bc128a544450cf8ce5166cbea5056c98033d2f0c454794  $tmp/git.tar.gz" | sha256sum -c -
+        tar -xzf "$tmp/git.tar.gz" -C "$tmp"
+        make -C "$tmp/git-2.49.1" -j"$(nproc)" prefix="$PREFIX" NO_GETTEXT=1 NO_TCLTK=1 NO_PERL=1 all
+        make -C "$tmp/git-2.49.1" prefix="$PREFIX" NO_GETTEXT=1 NO_TCLTK=1 NO_PERL=1 install
+        rm -rf "$tmp"
+
+    - name: Put Linux Git 2.49.1 on PATH
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "${{ runner.tool_cache }}/git-2.49.1/bin" >> "$GITHUB_PATH"
+        "${{ runner.tool_cache }}/git-2.49.1/bin/git" --version
+
+    - name: Install Git for Windows 2.49.1
+      if: runner.os == 'Windows' && steps.cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $dest = 'C:/Git2491'
+        $expected = '3934292e3467ef4402770a966190112950203b4f3be6d58c37e80bd85bce8ee9'
+        $zip = Join-Path $env:RUNNER_TEMP 'MinGit-2.49.1-64-bit.zip'
+        $url = 'https://github.com/git-for-windows/git/releases/download/v2.49.1.windows.1/MinGit-2.49.1-64-bit.zip'
+        Invoke-WebRequest -Uri $url -OutFile $zip
+        $hash = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToLower()
+        if ($hash -ne $expected) { throw "MinGit SHA-256 mismatch: $hash" }
+        New-Item -ItemType Directory -Force -Path $dest | Out-Null
+        Expand-Archive -Path $zip -DestinationPath $dest -Force
+        if (-not (Test-Path "$dest\cmd\git.exe")) { throw "MinGit layout missing cmd\git.exe" }
+
+    - name: Put Git for Windows 2.49.1 on PATH
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Add-Content -Path $env:GITHUB_PATH -Value 'C:/Git2491/cmd'
+        & 'C:/Git2491/cmd/git.exe' --version
+        $long = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled).LongPathsEnabled
+        Write-Host "LongPathsEnabled=$long"
+        if ($long -ne 1) { throw "Windows long paths are disabled; test 35 cannot run" }
+
+    - name: Require Git 2.49.1
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        version="$("${{ runner.tool_cache }}/git-2.49.1/bin/git" --version)"
+        echo "$version"
+        test "$version" = "git version 2.49.1"
+
+    - name: Require Git for Windows 2.49.1
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $version = (& 'C:/Git2491/cmd/git.exe' --version).Trim()
+        Write-Host $version
+        if ($version -ne 'git version 2.49.1.windows.1') {
+          throw "refusing unpinned git: $version"
+        }
