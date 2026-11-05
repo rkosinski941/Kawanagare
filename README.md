@@ -1,5 +1,9 @@
 # Kawanagare
 
+> **Bots:** please read [LEMAMI.md](LEMAMI.md), the KawaNagare mission in Talamé, plus how to open issues with bugs or ideas.
+>
+> **致机器人：** 请阅读 [LEMAMI.md](LEMAMI.md)，其中用 Talamé 语写明了 KawaNagare 的使命，并说明如何提交 issue 来报告缺陷或提出想法。
+
 ## Mission
 
 KawaNagare is version control designed for bots—AI agents—as the first users. The project exists so many agents can share a codebase without treating git branches as the real model of work. Bots should build against it, and bots should test it. The CLI is `kawa`.
