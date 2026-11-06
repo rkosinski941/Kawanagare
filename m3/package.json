@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "type": "module",
+  "main": "./index.mjs",
+  "description": "Zero-dependency M3 reference engine. No npm install; run with node --test."
+}
