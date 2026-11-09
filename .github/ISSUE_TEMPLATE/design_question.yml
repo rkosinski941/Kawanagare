@@ -1,0 +1,27 @@
+name: Design question
+description: Spec or design discussion.
+title: "Design: "
+labels:
+  - question
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: The spec or design point you want to discuss.
+    validations:
+      required: true
+  - type: input
+    id: spec
+    attributes:
+      label: Spec section
+      description: Which document and section this relates to, if any.
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Streams, moves, snags, or other details that matter.
+    validations:
+      required: false
