@@ -2,5 +2,7 @@
   "private": true,
   "type": "module",
   "main": "./index.mjs",
-  "description": "Zero-dependency M3 reference engine. No npm install; run with node --test."
+  "description": "Zero-dependency M3 reference engine. No npm install; run with node --test.",
+  "license": "AGPL-3.0-or-later"
 }
+

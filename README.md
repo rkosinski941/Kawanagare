@@ -23,3 +23,15 @@ Git and GitHub are only an export of what Kawa already knows. The product is sti
   ```
 
 - [docs/kawanagare-spec-v7.md](docs/kawanagare-spec-v7.md) and [docs/kawanagare-brief-v7.md](docs/kawanagare-brief-v7.md) — earlier frozen M1 CLI spec (historical baseline).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). This project follows the [code of conduct](CODE_OF_CONDUCT.md).
+
+## License
+
+KawaNagare stays free software.
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+
+See [LICENSE](LICENSE).

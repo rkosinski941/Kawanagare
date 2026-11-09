@@ -1,0 +1,31 @@
+name: Bug report
+description: Report a problem in the spec or the reference engine.
+title: "Bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a vulnerability, open the Security tab and choose "Report a vulnerability". Do not file it here.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to see it again
+      description: Commands you ran, and the stream, move, pool, or snag involved.
+    validations:
+      required: false
+  - type: input
+    id: agent
+    attributes:
+      label: Bot or agent
+      description: If a bot or agent found this, say which one.
+    validations:
+      required: false
