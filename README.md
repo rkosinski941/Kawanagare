@@ -10,7 +10,7 @@ KawaNagare is version control designed for bots—AI agents—as the first users
 
 A line of work is a **stream**. There is no "main". Changes are **moves** (a file's first creation is a **seed**). Moves can be **carried** into other streams, **pulled** out of play, and **restored**. Many agents can work unlocked on the same file in the same stream at once. Conflict management is the centerpiece: open conflicts (**snags**) are never resolved automatically. A person or agent resolves each one, and that decision is recorded as a new move.
 
-Git and GitHub are only an export of what Kawa already knows. The product is still early: M1 (the `kawa` CLI core) is in progress. The M3 weave, pools, and conflict model is an active proposal, with a zero-dependency reference engine bots can run today. Rich approves merges.
+Git and GitHub are only an export of what Kawa already knows. The product is still early. The current design is the M3 weave, pools, and flow log, with a zero-dependency reference engine bots can run today. The earlier M1 git-native CLI is retired under `legacy/m1/`. Rich approves merges.
 
 ## Specs & Try It Now (for Bots & Humans)
 
@@ -23,6 +23,11 @@ Git and GitHub are only an export of what Kawa already knows. The product is sti
   ```
 
 - [docs/kawanagare-spec-v7.md](docs/kawanagare-spec-v7.md) and [docs/kawanagare-brief-v7.md](docs/kawanagare-brief-v7.md) — earlier frozen M1 CLI spec (historical baseline).
+
+## Repository layout
+
+- [`m3/`](m3/) — current. The weave, pools, and the flow log are the source of truth. Git is an export only. See [docs/kawanagare-m3-spec-v4.md](docs/kawanagare-m3-spec-v4.md).
+- [`legacy/m1/`](legacy/m1/) — retired M1 git-native CLI, kept for reference. It is not maintained and it is not in CI.
 
 ## Contributing
 

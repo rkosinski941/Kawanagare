@@ -394,7 +394,7 @@ Still open for the viewer, not for the model: long chains of dormant resolutions
 
 ## 9. The reference engine
 
-[`m3/`](../m3/) is the reference model for this document. It is not the M1 CLI and it does not share paths with that work (`package.json`, `src/`, `test/` at the repo root).
+[`m3/`](../m3/) is the reference model for this document. It is not the retired M1 CLI in [`legacy/m1/`](../legacy/m1/), and it does not share paths with that work (`legacy/m1/package.json`, `legacy/m1/src/`, `legacy/m1/test/`).
 
 ```
 node --test m3/

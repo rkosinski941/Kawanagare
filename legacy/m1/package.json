@@ -2,6 +2,7 @@
   "name": "kawanagare",
   "version": "0.1.0-m1",
   "description": "KawaNagare: streams, moves and seeds on git",
+  "license": "AGPL-3.0-or-later",
   "type": "module",
   "bin": {
     "kawa": "dist/cli/index.js"
