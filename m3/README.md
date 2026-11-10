@@ -1,6 +1,6 @@
 # M3 reference engine
 
-A zero-dependency model of the [M3 architecture proposal](../docs/kawanagare-m3-spec-v4.md): line weave, pools, snags, rafts, and the flow log. It is not the M1 CLI. It does not use the repo-root `package.json`, `src/`, or `test/` tree.
+A zero-dependency model of the [M3 architecture proposal](../docs/kawanagare-m3-spec-v4.md): line weave, pools, snags, rafts, and the flow log. It is not the retired M1 CLI in [`legacy/m1/`](../legacy/m1/). It does not use that directory's `package.json`, `src/`, or `test/`.
 
 Bots are the users this model is built for. `assemble` is how you simulate a carry, a pull, or a restore before you commit to it.
 
