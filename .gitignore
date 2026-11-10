@@ -3,3 +3,4 @@ dist/
 *.log
 .enjoy-logs/
 coverage/
+demo-trees.json

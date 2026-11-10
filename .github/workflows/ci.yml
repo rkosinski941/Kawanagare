@@ -1,0 +1,101 @@
+name: CI
+
+# M1 matrix for spec §10d #2. macOS is omitted: GitHub-hosted macos minutes
+# cost 10x a Linux minute, and the pin question is Linux vs Windows trees.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ["20", "22"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/pin-git
+      - name: Confirm git on PATH
+        run: git --version
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Test
+        # The suite includes test 35 (a path longer than 260 characters).
+        # On windows-latest that is the long-path case.
+        run: npm test
+      - name: CRLF working tree
+        run: npx vitest run --config vitest.ci.config.ts test/ci/crlf-init.test.ts
+
+  demo-trees:
+    name: demo trees (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/pin-git
+      - name: Confirm git on PATH
+        run: git --version
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Materialize the demo fixture
+        run: npx vitest run --config vitest.ci.config.ts test/ci/demo-trees.test.ts
+        env:
+          KAWA_TREE_OUT: ${{ github.workspace }}/demo-trees.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demo-trees-${{ runner.os }}
+          path: demo-trees.json
+          if-no-files-found: error
+
+  compare-demo-trees:
+    name: compare demo trees
+    needs: demo-trees
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Linux trees
+        uses: actions/download-artifact@v4
+        with:
+          name: demo-trees-Linux
+          path: linux
+      - name: Download Windows trees
+        uses: actions/download-artifact@v4
+        with:
+          name: demo-trees-Windows
+          path: windows
+      - name: Assert identical stream trees
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, sys
+          linux = json.loads(pathlib.Path("linux/demo-trees.json").read_text())
+          windows = json.loads(pathlib.Path("windows/demo-trees.json").read_text())
+          print("linux git:  ", linux.get("git"))
+          print("windows git:", windows.get("git"))
+          names = sorted(set(linux["streams"]) | set(windows["streams"]))
+          ok = True
+          for name in names:
+              a = linux["streams"].get(name)
+              b = windows["streams"].get(name)
+              match = a == b and a is not None
+              ok = ok and match
+              print(f"{name}: match={match}")
+              print(f"  linux   {a}")
+              print(f"  windows {b}")
+          sys.exit(0 if ok else 1)
+          PY
