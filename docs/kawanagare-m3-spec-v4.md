@@ -18,6 +18,7 @@
 |---|---|
 | **stream** | A named list of moves that are on. There is no "main" stream. |
 | **move** | One signed, immutable change. It mints line records and entry records and switches older ones off. |
+| **intent block** | Required signed block on every move (`targets`, `kind`, `needs`, `reason`), and on a kanosei (`goal`, `targets`, `accept`). Written when the move is recorded or the kanosei opens. Kept in the flow log. Never consumed or deleted. |
 | **seed** | The move that first creates a file or pool. The root seed cannot be pulled. |
 | **carry** | Put a move's id into another stream. Records are not copied. The same Move-Id is the same change everywhere. |
 | **pull** | Take a move out of play in one stream. The script stays. |
@@ -28,11 +29,11 @@
 | **snag** | An open conflict. It is computed from the stream. Nobody resolves it automatically. |
 | **resolution move** | An ordinary move a person or bot checks in to record how a snag was decided. |
 | **raft** | A named list of moves that carry together, as one flow-log event. |
-| **kanosei** | (proposed) A named set of rival moves or rafts, each an alternative implementation of the same idea. A reviewer assembles each, carries one, and pulls the rest. |
+| **kanosei** | (proposed) A named set of rival moves or rafts, each an alternative implementation of the same idea. Carries its own intent block. A reviewer assembles each member, carries one, and pulls the rest. |
 | **flow log** | The ordered list of stream events. |
 | **open water / locked** | Open water (the default): concurrent edits land and snags show. Locked: an optional signed lock refuses other moves at check-in. |
 | **notice** | Something the viewer shows that is not a snag. Notices do not block export, except a waiting move, which does. |
-| **assemble** | A read-only preview: build a file or a pool view from a chosen move list, and report the snags, without writing a stream or the flow log. |
+| **assemble** | A read-only preview: build a file or a pool view from a chosen move list, and report the snags and intent-block reports, without writing a stream or the flow log. |
 | **site** | One place of work. Ids are site-scoped (`rich@desk`). |
 | **twins** | A label on a kind 1 or kind 2 snag whose sides are byte-identical. Not a separate snag. |
 | **order key** | A signed value on a move used only to display contested lines in a fixed order. |
@@ -56,7 +57,7 @@ A file is built from moves that say which lines are on and off. Its seed is the 
 
 ### 1.1 What is saved, and in what order
 
-1. **The script is written first.** It is immutable and named by its id, so writing it twice is harmless.
+1. **The script is written first.** It is immutable and named by its id, so writing it twice is harmless. A check-in refused for `intent_missing` or `intent_invalid` writes no script and no flow-log event (Intent block (required)).
 2. **The flow-log event is the commit point.** A move is on in a stream only when its event is in the log. The event is appended in one step.
 3. **Replay after a crash:**
    - *Script with no event:* stored and off. The viewer shows an **unattached** notice. Nothing turns on by itself (T38).
@@ -160,7 +161,7 @@ Many bots, and any people with them, may change the same file in the same stream
 
 Two bots inserting into different gaps of the same file do not snag. Two bots replacing the same line do. Both moves stay on until someone checks in a resolution. Kawa does not pick a side.
 
-**When Kawa refuses instead of snagging:** a move that conflicts with itself or breaks repo policy (§3, §3.1); a move on a locked node (§4.6); a carry whose needs are not met (§4.9). Check-in, pull, and restore are never refused for causing snags. They land, and the snags show.
+**When Kawa refuses instead of snagging:** a move that conflicts with itself or breaks repo policy (§3, §3.1); a move on a locked node (§4.6); a carry whose needs are not met (§4.9); a move recorded with a missing or schema-invalid intent block (`intent_missing`, `intent_invalid`; Intent block (required)); adding a kanosei member whose `kanosei` field does not name that kanosei (`kanosei_mismatch`; Kanosei intent). Check-in, pull, and restore are never refused for causing snags. They land, and the snags show.
 
 ### 4.2 Kinds of snag
 
@@ -257,7 +258,155 @@ A kanosei is a named set of rival moves or rafts. Each member is an alternative 
 - Nothing is picked automatically.
 - Another bot may add a member while the kanosei is open.
 
+Intent for a kanosei, its members, and its pick is specified in Kanosei intent.
+
 **Open questions.** Whether picking auto-pulls the others or leaves that to the reviewer (current lean: the reviewer decides). Whether a kanosei can be re-opened after a pick.
+
+### Intent block (required)
+
+Every move MUST carry an intent block.
+
+- The intent block MUST be written when the move is recorded (check-in).
+- The intent block MUST be signed with the move. The move signature covers the block.
+- The flow log MUST keep the intent block permanently. The record event MUST store the same signed block.
+- The intent block MUST NOT be consumed.
+- The intent block MUST NOT be deleted.
+- pull, restore, carry, and a raft event MUST NOT drop the intent block.
+
+A missing or schema-invalid intent block MUST be refused at record time. The move MUST NOT be stored. The flow log MUST NOT be appended. Refusal, not a snag. Snags are reserved for conflicts.
+
+| Case | Refusal code |
+|---|---|
+| Intent block absent | `intent_missing` |
+| Intent block fails this schema | `intent_invalid` |
+
+`intent_invalid` MUST name the field that failed. Record time checks the schema only. It MUST NOT require each id in `needs` to be on in the target stream.
+
+**Schema.** Every field is required. `needs` MAY be an empty list. An unknown field MUST be refused as `intent_invalid`.
+
+| Field | Rule |
+|---|---|
+| `targets` | List of files and pools the move touches. MUST contain one or more entries. Each entry MUST name a file (path) or a pool (pool id). |
+| `kind` | Enumerated kind. MUST be one of `add`, `change`, `remove`, `rename`, `fix`, `refactor`, `docs`, `test`. Any other value is `intent_invalid`. The enum is closed here and open for review. |
+| `needs` | List of move ids this move depends on. MAY be empty. Each entry MUST be a move id. |
+| `reason` | One short plain statement of why. MUST be a single non-empty string. |
+
+```yaml
+intent:
+  targets: ["src/db.c", "p:seed.rich@desk.1:1"]
+  kind: change
+  needs: [move.rich@desk.117]
+  reason: "replace the open() line in file src/db.c"
+```
+
+**assemble (§4.11).** assemble MUST validate the intent block of every move in the preview. assemble MUST report each move id listed in `needs` and absent from the plan, in `needs` order, with code `intent_need_absent`. That report MUST NOT be a snag.
+
+**Determinism.** Processing of intent blocks MUST be deterministic. Identical moves and identical intent blocks MUST yield identical assemble output.
+
+**Rationale.** KawaNagare is optimized for bots. Intent is machine-checked data, not a changelog. See https://github.com/rkosinski941/Kawanagare/issues/8.
+
+**Open questions.**
+
+- Whether the `kind` enum `add | change | remove | rename | fix | refactor | docs | test` stays the closed set.
+- Whether a raft carries its own intent block, or derives it from its member moves. Kanosei intent is resolved below.
+
+#### Kanosei intent
+
+A kanosei MUST carry its own intent block. The block states the shared idea. It MUST be written when the kanosei opens. It MUST be signed with the kanosei. The flow log MUST keep it permanently. It MUST NOT be consumed. It MUST NOT be deleted.
+
+**Kanosei schema.** Every field is required. An unknown field MUST be refused as `intent_invalid`.
+
+| Field | Rule |
+|---|---|
+| `goal` | One short plain statement of the shared idea. MUST be a single non-empty string. |
+| `targets` | Shared scope. List of files and pools. MUST contain one or more entries. Each entry MUST name a file (path) or a pool (pool id). |
+| `accept` | Machine-checkable success criteria. MUST contain one or more ids. A test id is a valid id. |
+
+A kanosei that opens with no intent block MUST be refused as `intent_missing`. A schema-invalid block MUST be refused as `intent_invalid`, and the refusal MUST name the field. The kanosei MUST NOT be stored. The flow log MUST NOT be appended. Refusal, not a snag.
+
+**Member intent.** Every member move or member raft MUST keep its normal intent block, plus `kanosei` and `approach`. Both added fields are required. Members MAY differ in `targets`. Members MAY differ in `needs`.
+
+| Field | Rule |
+|---|---|
+| `targets`, `kind`, `needs`, `reason` | Same rules as a move intent block. |
+| `kanosei` | MUST name the kanosei id. |
+| `approach` | One short plain statement of how this member differs. MUST be a single non-empty string. |
+
+A move that is not a kanosei member MUST NOT carry `kanosei` or `approach`. Either field on a non-member MUST be refused as `intent_invalid`.
+
+Adding a member to an open kanosei MUST check the member intent before the flow log is appended:
+
+| Case | Refusal code |
+|---|---|
+| Member intent block absent | `intent_missing` |
+| Member intent block fails this schema | `intent_invalid` |
+| `kanosei` does not name the open kanosei | `kanosei_mismatch` |
+
+On any of those refusals the kanosei MUST stay unchanged. The flow log MUST NOT be appended. `kanosei_mismatch` is a refusal, not a snag. Snags are reserved for conflicts.
+
+A member raft MUST carry this member intent block. That requirement does not decide whether a raft outside a kanosei carries its own intent block or derives it from its member moves.
+
+**assemble (§4.11).** assemble MUST validate each member independently against the kanosei `accept` list. assemble MUST report per member, code `kanosei_accept`, one member per check. Members MUST NOT be combined in that check. The report MUST NOT be a snag. Identical kanosei intent, identical member intents, and the same stream MUST yield identical per-member reports.
+
+**Pick.** The pick is one signed flow-log event. The event MUST name the kanosei and the chosen member. The event MUST carry an intent block. The pick signature covers that block. The flow log MUST keep the pick intent permanently.
+
+| Field | Rule |
+|---|---|
+| `member` | MUST name the chosen member. MUST equal the member named on the pick event. |
+| `reason` | One short plain statement. MUST be a single non-empty string. |
+
+A pick with no intent block MUST be refused as `intent_missing`. A schema-invalid pick intent MUST be refused as `intent_invalid`. The pick MUST NOT be appended.
+
+Rivals are pulled, not deleted. pull MUST keep each rival's intent block in the flow log permanently. Those blocks MUST NOT be consumed. Those blocks MUST NOT be deleted. They remain the record of the rejected alternatives. restore MUST NOT rewrite them.
+
+```yaml
+kanosei: open-choice
+intent:
+  goal: "one open() line in src/db.c"
+  targets: ["src/db.c", "p:seed.rich@desk.1:1"]
+  accept: ["t.open.flags", "t.open.mode"]
+members:
+  - move: move.rich@desk.118
+    intent:
+      targets: ["src/db.c", "p:seed.rich@desk.1:1"]
+      kind: change
+      needs: [move.rich@desk.117]
+      reason: "replace open() and the pool entry name"
+      kanosei: open-choice
+      approach: "flags argument and a pool entry rename"
+  - raft: open-mode
+    intent:
+      targets: ["src/db.c"]
+      kind: change
+      needs: []
+      reason: "replace open() with a mode argument"
+      kanosei: open-choice
+      approach: "mode argument, carried as a raft"
+pick:
+  kanosei: open-choice
+  member: move.rich@desk.118
+  intent:
+    member: move.rich@desk.118
+    reason: "t.open.flags holds for this member"
+```
+
+Example per-member report. The `ok` values show the report shape:
+
+```yaml
+code: kanosei_accept
+kanosei: open-choice
+members:
+  - member: move.rich@desk.118
+    accept:
+      - {id: t.open.flags, ok: true}
+      - {id: t.open.mode, ok: false}
+  - member: open-mode
+    accept:
+      - {id: t.open.flags, ok: false}
+      - {id: t.open.mode, ok: true}
+```
+
+**Resolved.** A kanosei carries its own intent block, as specified in this subsection. Whether a raft carries its own intent block, or derives it from its member moves, remains open.
 
 ### 4.8 What blocks export
 
@@ -305,7 +454,7 @@ A removal resolution ("B without A") lists A under `absent`. While A is off and 
 
 ### 4.11 Read-only assemble
 
-`assemble` builds a file or a pool view from any chosen move list and returns the bytes and the snags. It does not append a flow-log event, does not turn a move on, and does not take one off.
+`assemble` builds a file or a pool view from any chosen move list and returns the bytes, the snags, and the intent-block reports. It does not append a flow-log event, does not turn a move on, and does not take one off.
 
 ```
 kawa assemble <path> --moves <list>
@@ -317,8 +466,10 @@ Bots use it to simulate a decision before committing:
 - **Before a carry:** assemble the target stream's moves plus the candidate. If the preview's snags are missing needs, read the proposed group and assemble again with that group. Carry only after the preview is the tree you want.
 - **Before a pull:** assemble the stream `--without` that move. The snags are what the pull would expose.
 - **Before a restore:** assemble the stream `--with` that move. Restore will land even when needs are missing; assemble shows the snag first.
+- **Intent block:** assemble MUST validate the intent block of every move in the preview. It MUST report `intent_missing` or `intent_invalid` when the block is missing or schema-invalid. It MUST report `intent_need_absent` for each move id listed in `needs` and absent from the plan. These reports are not snags. Identical moves and identical intent blocks MUST yield identical assemble output. See Intent block (required).
+- **Kanosei intent:** assemble MUST validate each kanosei member independently against that kanosei's `accept` list and MUST report per member (`kanosei_accept`). Members MUST NOT be combined in that check. The report is not a snag. See Kanosei intent.
 
-The reference engine's `assemble` is that operation. A snapshot of the repo before and after is identical.
+The reference engine's `assemble` is that operation for bytes and snags. A snapshot of the repo before and after is identical. Intent-block reports, including per-member kanosei `accept` reports, are not emitted by the reference engine yet.
 
 ## 5. Worked example
 
@@ -471,3 +622,4 @@ A production store still has to add real signatures, a crash-safe append, and th
 5. **Partial raft carry.** v4 carries a raft all or nothing and refuses when a need is missing, offering the needs group instead. Should a later revision allow carrying part of a raft?
 6. **Who signs repo policy.** v4 uses one signed policy event (default: case-insensitive, NFC, Windows forbidden names, `max_path` 259). Who, besides the repo owner, may append a new policy event?
 7. **Kanosei.** A proposed word for a named set of rival moves or rafts, each an alternative implementation of the same idea (see Kanosei (proposed), after §4.7). Does picking one member auto-pull the others, or does the reviewer decide? Current lean: the reviewer decides. Can a kanosei be re-opened after a pick? See https://github.com/rkosinski941/Kawanagare/issues/10 and #8 (https://github.com/rkosinski941/Kawanagare/issues/8).
+8. **Intent block.** Every move MUST carry an intent block (Intent block (required)). A kanosei MUST carry its own intent block (Kanosei intent). Does the `kind` enum `add | change | remove | rename | fix | refactor | docs | test` stay the closed set? Whether a raft carries its own intent block, or derives it from its member moves, remains open. See https://github.com/rkosinski941/Kawanagare/issues/8.
