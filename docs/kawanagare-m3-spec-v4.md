@@ -28,6 +28,7 @@
 | **snag** | An open conflict. It is computed from the stream. Nobody resolves it automatically. |
 | **resolution move** | An ordinary move a person or bot checks in to record how a snag was decided. |
 | **raft** | A named list of moves that carry together, as one flow-log event. |
+| **kanosei** | (proposed) A named set of rival moves or rafts, each an alternative implementation of the same idea. A reviewer assembles each, carries one, and pulls the rest. |
 | **flow log** | The ordered list of stream events. |
 | **open water / locked** | Open water (the default): concurrent edits land and snags show. Locked: an optional signed lock refuses other moves at check-in. |
 | **notice** | Something the viewer shows that is not a snag. Notices do not block export, except a waiting move, which does. |
@@ -245,6 +246,19 @@ A raft is a **signed flow-log event that names a list of moves**, for example `o
 - **Pulling one member is allowed** (T33). The raft then shows a **partly on** notice (`open-sig: 2 of 3 members on`). That notice does not block export. Pulling the whole raft is one event too.
 - **`--with-needs` is transitive.** Move 10 needs 7, and 7 needs 6, so the group is `10 → 7 → 6`. A carry computes the whole closure, deps first, and names it (`needs:10 = [6, 7, 10]`). It does **not** add those moves unless the caller passes `with-needs`. One event then carries the group. Silent extra moves are a bug. The reference engine returns the group on both the refusal and the successful carry.
 
+### Kanosei (proposed)
+
+A kanosei is a named set of rival moves or rafts. Each member is an alternative implementation of the same idea. Rich suggested the word.
+
+- Members are shown side by side as alternatives, not as a snag.
+- A reviewer (bot or person) runs assemble on each member against the target stream.
+- The pick is a carry recorded as one signed flow-log event. The event names the kanosei and the chosen member.
+- The other members are pulled, not deleted, and can be restored.
+- Nothing is picked automatically.
+- Another bot may add a member while the kanosei is open.
+
+**Open questions.** Whether picking auto-pulls the others or leaves that to the reviewer (current lean: the reviewer decides). Whether a kanosei can be re-opened after a pick.
+
 ### 4.8 What blocks export
 
 **Every snag blocks export, including event snags. A waiting move blocks export. Other notices do not.**
@@ -456,3 +470,4 @@ A production store still has to add real signatures, a crash-safe append, and th
 4. **Resolution chains.** When one resolution settles a snag and a later one settles a snag that involves the first, should the viewer show the whole chain or only the latest decision?
 5. **Partial raft carry.** v4 carries a raft all or nothing and refuses when a need is missing, offering the needs group instead. Should a later revision allow carrying part of a raft?
 6. **Who signs repo policy.** v4 uses one signed policy event (default: case-insensitive, NFC, Windows forbidden names, `max_path` 259). Who, besides the repo owner, may append a new policy event?
+7. **Kanosei.** A proposed word for a named set of rival moves or rafts, each an alternative implementation of the same idea (see Kanosei (proposed), after §4.7). Does picking one member auto-pull the others, or does the reviewer decide? Current lean: the reviewer decides. Can a kanosei be re-opened after a pick? See https://github.com/rkosinski941/Kawanagare/issues/10 and #8 (https://github.com/rkosinski941/Kawanagare/issues/8).
