@@ -20,7 +20,7 @@ import {
 import { directNeedIds, weaveFiles, START, END } from './weave.mjs';
 import { longestPath, poolView, selfConflicts } from './pools.mjs';
 import { checkInRefusal, deriveOps, intentError } from './intent.mjs';
-import { CODE } from './codes.mjs';
+import { CODE, NOTICE } from './codes.mjs';
 
 export { START, END, DEFAULT_POLICY, insideWorktree, forbiddenName, nameKey };
 
@@ -768,12 +768,14 @@ function collectIntentInfo(scripts, idx, moveList) {
       } else {
         for (const need of intent.needs) {
           if (!onSet.has(need)) {
-            needReports.push({
+            const report = {
               move: moveId,
               need,
               code: CODE.intent_need_absent,
               provenance: 'authored_only',
-            });
+            };
+            needReports.push(report);
+            intentReports.push({ ...report });
           }
         }
       }
@@ -781,7 +783,10 @@ function collectIntentInfo(scripts, idx, moveList) {
 
     const derived = deriveOps(script, scripts);
     opsDerived[moveId] = derived.ops;
-    if (derived.partial.length) opsPartial[moveId] = derived.partial.slice();
+    if (derived.partial.length) {
+      opsPartial[moveId] = derived.partial.slice();
+      intentReports.push({ move: moveId, code: NOTICE.ops_derived_partial, ids: derived.partial.slice() });
+    }
   }
 
   return {
