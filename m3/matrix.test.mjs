@@ -39,6 +39,7 @@ import {
   STEP7,
   script121,
   script122,
+  withIntent,
 } from './fixture.mjs';
 
 function text(repo, stream, path) {
@@ -52,7 +53,7 @@ function kinds(repo, stream) {
 
 test('T01 kind 1: Joy replacing L4.1 stays on beside move 118 and blocks export', () => {
   const repo = makeOdbcRepo();
-  const landed = checkin(repo, 'dev', script121());
+  const landed = checkin(repo, 'dev', withIntent(script121()));
   assert.equal(landed.ok, true);
   const view = inspect(repo, 'dev');
   const snag = view.snags.find((item) => item.kind === 1);
@@ -68,7 +69,7 @@ test('T01 kind 1: Joy replacing L4.1 stays on beside move 118 and blocks export'
 
 test('T02 kind 1 labelled twin: byte-identical replacements are one snag', () => {
   const repo = makeOdbcRepo();
-  checkin(repo, 'dev', script121('int open(int flags);\n'));
+  checkin(repo, 'dev', withIntent(script121('int open(int flags);\n')));
   const view = inspect(repo, 'dev');
   const slots = view.snags.filter((snag) => snag.kind === 1);
   assert.equal(slots.length, 1);
@@ -79,16 +80,16 @@ test('T02 kind 1 labelled twin: byte-identical replacements are one snag', () =>
 
 test('T03 kind 2: same-gap inserts stay in order_key order and still snag', () => {
   const repo = makeOdbcRepo();
-  checkin(repo, 'release', {
+  checkin(repo, 'release', withIntent({
     id: 'gap.high',
     orderKey: '20',
     lines: [{ id: 'GH', node: O.file, bytes: 'HIGH\n', after: 'L4.0', before: 'L4.1' }],
-  });
-  checkin(repo, 'release', {
+  }));
+  checkin(repo, 'release', withIntent({
     id: 'gap.low',
     orderKey: '10',
     lines: [{ id: 'GL', node: O.file, bytes: 'LOW\n', after: 'L4.0', before: 'L4.1' }],
-  });
+  }));
   const view = inspect(repo, 'release');
   const snag = view.snags.find((item) => item.kind === 2);
   assert.ok(snag);
@@ -100,14 +101,14 @@ test('T03 kind 2: same-gap inserts stay in order_key order and still snag', () =
 
 test('T04 kind 3: an insert whose after-anchor is a replaced line snags', () => {
   const repo = makeOdbcRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'joy.insert',
     orderKey: '200',
     author: 'joy',
     site: 'lap',
     saw: [O.seed1, O.seed4],
     lines: [{ id: 'J1', node: O.file, bytes: '/* beside */\n', after: 'L4.1', before: 'L4.2' }],
-  });
+  }));
   const view = inspect(repo, 'dev');
   assert.ok(view.snags.some((snag) => snag.kind === 3 && snag.spot === 'L4.1'));
   assert.ok(text(repo, 'dev', 'src/db.c').includes('/* beside */\n'));
@@ -117,11 +118,11 @@ test('T04 kind 3: an insert whose after-anchor is a replaced line snags', () => 
 test('T05 kind 4: anchoring on a pulled move is missing-need, not a waiting notice', () => {
   const repo = makeOdbcRepo();
   pull(repo, 'dev', O.m117);
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'move.B',
     orderKey: '9',
     lines: [{ id: 'B1', node: O.file, bytes: 'x\n', after: 'L117.0', before: END }],
-  });
+  }));
   const view = inspect(repo, 'dev');
   assert.ok(view.snags.some((snag) => snag.kind === 4 && snag.need === O.m117));
   assert.equal(view.notices.some((notice) => notice.kind === 'waiting'), false);
@@ -129,7 +130,7 @@ test('T05 kind 4: anchoring on a pulled move is missing-need, not a waiting noti
 
 test('T06 waiting: a missing script is a notice that holds export and is not kind 4', () => {
   const repo = createRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'seed',
     orderKey: '1',
     nodes: [
@@ -138,13 +139,13 @@ test('T06 waiting: a missing script is a notice that holds export and is not kin
     ],
     entries: [{ id: 'Ef', pool: 'root', node: 'f', name: 't.txt' }],
     lines: [{ id: 'L0', node: 'f', bytes: 'base\n', after: START, before: END }],
-  });
+  }));
   landEvent(repo, 'dev', { kind: 'checkin', move: 'move.117', site: 'desk' });
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'move.B',
     orderKey: '2',
     lines: [{ id: 'B1', node: 'f', bytes: 'x\n', after: 'L117.0', before: END }],
-  });
+  }));
   const view = inspect(repo, 'dev');
   const waiting = view.notices.find((notice) => notice.kind === 'waiting');
   assert.ok(waiting);
@@ -156,12 +157,12 @@ test('T06 waiting: a missing script is a notice that holds export and is not kin
 
 test('T07 kind 5: an anchor switched off with no replacement is lost, and the weave still orders', () => {
   const repo = makeOdbcRepo();
-  checkin(repo, 'dev', { id: 'off42', orderKey: '201', off: ['L4.2'] });
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({ id: 'off42', orderKey: '201', off: ['L4.2'] }));
+  checkin(repo, 'dev', withIntent({
     id: 'insD',
     orderKey: '202',
     lines: [{ id: 'D1', node: O.file, bytes: 'tail\n', after: 'L4.2', before: END }],
-  });
+  }));
   const view = inspect(repo, 'dev');
   const lost = view.snags.filter((snag) => snag.kind === 5 && snag.spot === 'L4.2');
   assert.equal(lost.length, 1);
@@ -172,7 +173,7 @@ test('T07 kind 5: an anchor switched off with no replacement is lost, and the we
 
 test('T08 twin label: a identical 3-line run is one kind-2 snag, labelled twin', () => {
   const repo = createRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'seed',
     orderKey: '1',
     nodes: [
@@ -184,8 +185,8 @@ test('T08 twin label: a identical 3-line run is one kind-2 snag, labelled twin',
       { id: 'A', node: 'f', bytes: 'before\n', after: START, before: END },
       { id: 'B', node: 'f', bytes: 'after\n', after: 'A', before: END },
     ],
-  });
-  const run = (id, key) => checkin(repo, 'dev', {
+  }));
+  const run = (id, key) => checkin(repo, 'dev', withIntent({
     id,
     orderKey: key,
     lines: [1, 2, 3].map((n) => ({
@@ -195,7 +196,7 @@ test('T08 twin label: a identical 3-line run is one kind-2 snag, labelled twin',
       after: 'A',
       before: 'B',
     })),
-  });
+  }));
   run('fix.a', '2');
   run('fix.b', '3');
   const view = inspect(repo, 'dev');
@@ -207,16 +208,16 @@ test('T08 twin label: a identical 3-line run is one kind-2 snag, labelled twin',
 
 test('T09 a lone closing brace in the same gap is kind 2 and not a twin', () => {
   const repo = makeOdbcRepo();
-  checkin(repo, 'release', {
+  checkin(repo, 'release', withIntent({
     id: 'brace.a',
     orderKey: '2',
     lines: [{ id: 'BA', node: O.file, bytes: '}\n', after: 'L4.0', before: 'L4.1' }],
-  });
-  checkin(repo, 'release', {
+  }));
+  checkin(repo, 'release', withIntent({
     id: 'brace.b',
     orderKey: '3',
     lines: [{ id: 'BB', node: O.file, bytes: '}\n', after: 'L4.0', before: 'L4.1' }],
-  });
+  }));
   const snag = inspect(repo, 'release').snags.find((item) => item.kind === 2);
   assert.ok(snag);
   assert.equal(snag.twin, false);
@@ -237,7 +238,7 @@ test('T11 carrying a twin tags the kind-1 snag with the carry', () => {
   const repo = makeOdbcRepo();
   const ontoRelease = carry(repo, 'release', O.m118);
   assert.equal(ontoRelease.ok, true);
-  checkin(repo, 'dev', script121('int open(int flags);\n'));
+  checkin(repo, 'dev', withIntent(script121('int open(int flags);\n')));
   const carried = carry(repo, 'release', O.m121);
   assert.equal(carried.ok, true);
   const snag = inspect(repo, 'release').snags.find((item) => item.kind === 1);
@@ -250,18 +251,18 @@ test('T11 carrying a twin tags the kind-1 snag with the carry', () => {
 
 test('T12 kind 7: two entries named util.c in one pool', () => {
   const repo = makeOdbcRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'u1',
     orderKey: '30',
     nodes: [{ id: 'n:u1', kind: 'file' }],
     entries: [{ id: 'E:u1', pool: O.src, node: 'n:u1', name: 'util.c' }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'u2',
     orderKey: '31',
     nodes: [{ id: 'n:u2', kind: 'file' }],
     entries: [{ id: 'E:u2', pool: O.src, node: 'n:u2', name: 'util.c' }],
-  });
+  }));
   const snag = inspect(repo, 'dev').snags.find((item) => item.kind === 7);
   assert.ok(snag);
   assert.equal(snag.code, 'duplicate_name');
@@ -269,12 +270,12 @@ test('T12 kind 7: two entries named util.c in one pool', () => {
 
 test('T13 kind 7: divergent renames put one node under two names', () => {
   const repo = makeOdbcRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'rename.dbx',
     orderKey: '40',
     entryOff: [O.eOdbc],
     entries: [{ id: 'E:dbx', pool: O.src, node: O.file, name: 'dbx.c' }],
-  });
+  }));
   const snag = inspect(repo, 'dev').snags.find((item) => item.code === 'node_two_names');
   assert.ok(snag);
   assert.equal(snag.kind, 7);
@@ -284,18 +285,18 @@ test('T13 kind 7: divergent renames put one node under two names', () => {
 
 test('T14 kind 7: Readme and README collide on every site under the case policy', () => {
   const repo = makeOdbcRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'readme.lower',
     orderKey: '50',
     nodes: [{ id: 'n:r1', kind: 'file' }],
     entries: [{ id: 'E:r1', pool: O.src, node: 'n:r1', name: 'Readme' }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'readme.upper',
     orderKey: '51',
     nodes: [{ id: 'n:r2', kind: 'file' }],
     entries: [{ id: 'E:r2', pool: O.src, node: 'n:r2', name: 'README' }],
-  });
+  }));
   const snag = inspect(repo, 'dev').snags.find((item) => item.code === 'duplicate_name');
   assert.ok(snag);
   assert.equal(snag.kind, 7);
@@ -303,19 +304,19 @@ test('T14 kind 7: Readme and README collide on every site under the case policy'
 
 test('T15 a case-only rename in one move is clean', () => {
   const repo = makeOdbcRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'readme.seed',
     orderKey: '52',
     nodes: [{ id: 'n:readme', kind: 'file' }],
     entries: [{ id: 'E:readme', pool: O.src, node: 'n:readme', name: 'Readme' }],
     lines: [{ id: 'RL', node: 'n:readme', bytes: 'hi\n', after: START, before: END }],
-  });
-  const renamed = checkin(repo, 'dev', {
+  }));
+  const renamed = checkin(repo, 'dev', withIntent({
     id: 'readme.rename',
     orderKey: '53',
     entryOff: ['E:readme'],
     entries: [{ id: 'E:README', pool: O.src, node: 'n:readme', name: 'README' }],
-  });
+  }));
   assert.equal(renamed.ok, true);
   const view = inspect(repo, 'dev');
   assert.equal(view.snags.some((snag) => snag.kind === 7 && snag.names?.includes('README')), false);
@@ -328,31 +329,31 @@ test('T16 NFC and NFD café.c collide under the unicode policy', () => {
   const nfc = 'caf\u00e9.c';
   const nfd = 'cafe\u0301.c';
   assert.notEqual(nfc, nfd);
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'cafe.nfc',
     orderKey: '60',
     nodes: [{ id: 'n:c1', kind: 'file' }],
     entries: [{ id: 'E:c1', pool: O.src, node: 'n:c1', name: nfc }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'cafe.nfd',
     orderKey: '61',
     nodes: [{ id: 'n:c2', kind: 'file' }],
     entries: [{ id: 'E:c2', pool: O.src, node: 'n:c2', name: nfd }],
-  });
+  }));
   assert.ok(inspect(repo, 'dev').snags.some((snag) => snag.kind === 7 && snag.code === 'duplicate_name'));
 });
 
 test('T17 kind 8: a file added under a deleted pool is an orphan', () => {
   const repo = makeOdbcRepo();
-  checkin(repo, 'dev', { id: 'del.src', orderKey: '70', entryOff: [O.eSrc] });
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({ id: 'del.src', orderKey: '70', entryOff: [O.eSrc] }));
+  checkin(repo, 'dev', withIntent({
     id: 'add.inside',
     orderKey: '71',
     nodes: [{ id: 'n:util', kind: 'file' }],
     entries: [{ id: 'E:util', pool: O.src, node: 'n:util', name: 'util.c' }],
     lines: [{ id: 'U1', node: 'n:util', bytes: 'int u;\n', after: START, before: END }],
-  });
+  }));
   const snag = inspect(repo, 'dev').snags.find((item) => item.kind === 8);
   assert.ok(snag);
   assert.ok(snag.choices.includes('restore the pool'));
@@ -362,7 +363,7 @@ test('T17 kind 8: a file added under a deleted pool is an orphan', () => {
 
 test('T18 kind 9: two moves that swap pools form a cycle', () => {
   const repo = createRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'seed',
     orderKey: '1',
     nodes: [
@@ -374,25 +375,25 @@ test('T18 kind 9: two moves that swap pools form a cycle', () => {
       { id: 'Ea', pool: 'root', node: 'a', name: 'a' },
       { id: 'Eb', pool: 'root', node: 'b', name: 'b' },
     ],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'move.A',
     orderKey: '2',
     entryOff: ['Ea'],
     entries: [{ id: 'Ea2', pool: 'b', node: 'a', name: 'a' }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'move.B',
     orderKey: '3',
     entryOff: ['Eb'],
     entries: [{ id: 'Eb2', pool: 'a', node: 'b', name: 'b' }],
-  });
+  }));
   assert.ok(inspect(repo, 'dev').snags.some((snag) => snag.kind === 9));
 });
 
 test('T19 a move that conflicts with itself is refused and does not land', () => {
   const repo = createRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'seed',
     orderKey: '1',
     nodes: [
@@ -400,8 +401,8 @@ test('T19 a move that conflicts with itself is refused and does not land', () =>
       { id: 'f', kind: 'file' },
     ],
     entries: [{ id: 'Ef', pool: 'root', node: 'f', name: 't.txt' }],
-  });
-  const cycle = checkin(repo, 'dev', {
+  }));
+  const cycle = checkin(repo, 'dev', withIntent({
     id: 'cycle',
     orderKey: '2',
     nodes: [
@@ -412,31 +413,31 @@ test('T19 a move that conflicts with itself is refused and does not land', () =>
       { id: 'e1', pool: 'a', node: 'b', name: 'b' },
       { id: 'e2', pool: 'b', node: 'a', name: 'a' },
     ],
-  });
+  }));
   assert.equal(cycle.ok, false);
   assert.equal(cycle.refused, true);
   assert.ok(cycle.reasons.some((reason) => reason.code === 'cycle'));
   assert.equal(movesOn(repo, 'dev').includes('cycle'), false);
 
-  const twoNames = checkin(repo, 'dev', {
+  const twoNames = checkin(repo, 'dev', withIntent({
     id: 'two',
     orderKey: '3',
     entries: [
       { id: 'n1', pool: 'root', node: 'f', name: 'a.c' },
       { id: 'n2', pool: 'root', node: 'f', name: 'b.c' },
     ],
-  });
+  }));
   assert.equal(twoNames.refused, true);
   assert.ok(twoNames.reasons.some((reason) => reason.code === 'two_names'));
 
-  const twoAttrs = checkin(repo, 'dev', {
+  const twoAttrs = checkin(repo, 'dev', withIntent({
     id: 'attrs',
     orderKey: '4',
     attributes: [
       { node: 'f', key: 'mode', value: '755' },
       { node: 'f', key: 'mode', value: '600' },
     ],
-  });
+  }));
   assert.equal(twoAttrs.refused, true);
   assert.ok(twoAttrs.reasons.some((reason) => reason.code === 'two_attributes'));
   assert.deepEqual(movesOn(repo, 'dev'), ['seed']);
@@ -444,42 +445,42 @@ test('T19 a move that conflicts with itself is refused and does not land', () =>
 
 test('T20 kind 10: two visible modes snag, and switching the old value off is clean', () => {
   const repo = makeOdbcRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'mode.755',
     orderKey: '80',
     attrOff: ['seed.4:mode'],
     attributes: [{ id: 'mode.755:mode', node: O.file, key: 'mode', value: '755' }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'mode.600',
     orderKey: '81',
     attrOff: ['seed.4:mode'],
     attributes: [{ id: 'mode.600:mode', node: O.file, key: 'mode', value: '600' }],
-  });
+  }));
   const snag = inspect(repo, 'dev').snags.find((item) => item.kind === 10);
   assert.ok(snag);
   assert.equal(snag.key, 'mode');
 
   const clean = makeOdbcRepo();
-  checkin(clean, 'dev', {
+  checkin(clean, 'dev', withIntent({
     id: 'mode.755',
     orderKey: '80',
     attrOff: ['seed.4:mode'],
     attributes: [{ id: 'mode.755:mode', node: O.file, key: 'mode', value: '755' }],
-  });
-  checkin(clean, 'dev', {
+  }));
+  checkin(clean, 'dev', withIntent({
     id: 'mode.600',
     orderKey: '81',
     attrOff: ['mode.755:mode'],
     attributes: [{ id: 'mode.600:mode', node: O.file, key: 'mode', value: '600' }],
-  });
+  }));
   assert.equal(inspect(clean, 'dev').snags.some((item) => item.kind === 10), false);
   assert.equal(inspect(clean, 'dev').files.find((file) => file.node === O.file).meta.mode, '600');
 });
 
 test('T21 kind 10: two whole-content values on a binary node', () => {
   const repo = createRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'seed',
     orderKey: '1',
     nodes: [
@@ -488,19 +489,19 @@ test('T21 kind 10: two whole-content values on a binary node', () => {
     ],
     entries: [{ id: 'Eb', pool: 'root', node: 'bin', name: 'blob.bin' }],
     attributes: [{ id: 'seed:content', node: 'bin', key: 'content', value: 'v1' }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'bin.a',
     orderKey: '2',
     attrOff: ['seed:content'],
     attributes: [{ id: 'bin.a:content', node: 'bin', key: 'content', value: 'aaaa' }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'bin.b',
     orderKey: '3',
     attrOff: ['seed:content'],
     attributes: [{ id: 'bin.b:content', node: 'bin', key: 'content', value: 'bbbb' }],
-  });
+  }));
   const snag = inspect(repo, 'dev').snags.find((item) => item.kind === 10);
   assert.ok(snag);
   assert.equal(snag.key, 'content');
@@ -508,7 +509,7 @@ test('T21 kind 10: two whole-content values on a binary node', () => {
 
 test('T22 kind 10: two symlink targets', () => {
   const repo = createRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'seed',
     orderKey: '1',
     nodes: [
@@ -517,19 +518,19 @@ test('T22 kind 10: two symlink targets', () => {
     ],
     entries: [{ id: 'El', pool: 'root', node: 'link', name: 'alias' }],
     attributes: [{ id: 'seed:symlink', node: 'link', key: 'symlink', value: 'a' }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'sym.a',
     orderKey: '2',
     attrOff: ['seed:symlink'],
     attributes: [{ id: 'sym.a:symlink', node: 'link', key: 'symlink', value: 'one' }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'sym.b',
     orderKey: '3',
     attrOff: ['seed:symlink'],
     attributes: [{ id: 'sym.b:symlink', node: 'link', key: 'symlink', value: 'two' }],
-  });
+  }));
   const snag = inspect(repo, 'dev').snags.find((item) => item.kind === 10);
   assert.ok(snag);
   assert.equal(snag.key, 'symlink');
@@ -537,8 +538,8 @@ test('T22 kind 10: two symlink targets', () => {
 
 test('T23 pulling an input makes the resolution dormant and clears the snag', () => {
   const repo = makeOdbcRepo();
-  checkin(repo, 'dev', script121());
-  checkin(repo, 'dev', script122());
+  checkin(repo, 'dev', withIntent(script121()));
+  checkin(repo, 'dev', withIntent(script122()));
   assert.equal(text(repo, 'dev', 'src/db.c'), STEP7);
   pull(repo, 'dev', O.m121);
   const view = inspect(repo, 'dev');
@@ -550,8 +551,8 @@ test('T23 pulling an input makes the resolution dormant and clears the snag', ()
 
 test('T24 restoring the input wakes the resolution', () => {
   const repo = makeOdbcRepo();
-  checkin(repo, 'dev', script121());
-  checkin(repo, 'dev', script122());
+  checkin(repo, 'dev', withIntent(script121()));
+  checkin(repo, 'dev', withIntent(script122()));
   pull(repo, 'dev', O.m121);
   restore(repo, 'dev', O.m121);
   const view = inspect(repo, 'dev');
@@ -573,7 +574,7 @@ test('T25 pull then restore of move 118 returns the renamed file exactly', () =>
 
 test('T26 kind 4 tagged 11: pulling a needed move names the pull event', () => {
   const repo = createRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'seed',
     orderKey: '1',
     nodes: [
@@ -582,17 +583,17 @@ test('T26 kind 4 tagged 11: pulling a needed move names the pull event', () => {
     ],
     entries: [{ id: 'Ef', pool: 'root', node: 'f', name: 't.txt' }],
     lines: [{ id: 'Base', node: 'f', bytes: 'base\n', after: START, before: END }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'move.A',
     orderKey: '2',
     lines: [{ id: 'La', node: 'f', bytes: 'from A\n', after: 'Base', before: END }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'move.B',
     orderKey: '3',
     lines: [{ id: 'Lb', node: 'f', bytes: 'from B\n', after: 'La', before: END }],
-  });
+  }));
   assert.equal(inspect(repo, 'dev').snags.length, 0);
   const pulled = pull(repo, 'dev', 'move.A');
   const snag = inspect(repo, 'dev').snags.find((item) => item.kind === 4);
@@ -606,7 +607,7 @@ test('T26 kind 4 tagged 11: pulling a needed move names the pull event', () => {
 test('T27 kind 1 tagged 11: restoring move 118 reopens the replacement snag', () => {
   const repo = makeOdbcRepo();
   pull(repo, 'dev', O.m118);
-  checkin(repo, 'dev', script121());
+  checkin(repo, 'dev', withIntent(script121()));
   assert.equal(inspect(repo, 'dev').snags.some((snag) => snag.kind === 1), false);
   const restored = restore(repo, 'dev', O.m118);
   const snag = inspect(repo, 'dev').snags.find((item) => item.kind === 1);
@@ -618,7 +619,7 @@ test('T27 kind 1 tagged 11: restoring move 118 reopens the replacement snag', ()
 
 test('T28 a removal resolution goes dormant when the absent move is restored', () => {
   const repo = createRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'seed',
     orderKey: '1',
     nodes: [
@@ -627,21 +628,21 @@ test('T28 a removal resolution goes dormant when the absent move is restored', (
     ],
     entries: [{ id: 'Ef', pool: 'root', node: 'f', name: 't.txt' }],
     lines: [{ id: 'L', node: 'f', bytes: 'base\n', after: START, before: END }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'A',
     orderKey: '2',
     off: ['L'],
     lines: [{ id: 'La', node: 'f', bytes: 'A\n', after: START, before: END, replaces: 'L' }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'B',
     orderKey: '3',
     off: ['L'],
     lines: [{ id: 'Lb', node: 'f', bytes: 'B\n', after: START, before: END, replaces: 'L' }],
-  });
+  }));
   pull(repo, 'dev', 'A');
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'R',
     orderKey: '4',
     resolves: {
@@ -652,7 +653,7 @@ test('T28 a removal resolution goes dormant when the absent move is restored', (
       saw: ['Lb'],
       decision: 'B without A',
     },
-  });
+  }, { targets: [{ node: 'root' }] }));
   assert.equal(inspect(repo, 'dev').snags.length, 0);
   const restored = restore(repo, 'dev', 'A');
   const view = inspect(repo, 'dev');
@@ -669,14 +670,14 @@ test('T28 a removal resolution goes dormant when the absent move is restored', (
 
 test('T29 a new move in a resolved spot dormants the resolution and opens a fresh snag', () => {
   const repo = makeOdbcRepo();
-  checkin(repo, 'dev', script121());
-  checkin(repo, 'dev', script122());
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent(script121()));
+  checkin(repo, 'dev', withIntent(script122()));
+  checkin(repo, 'dev', withIntent({
     id: 'move.130',
     orderKey: '130',
     off: ['L4.1'],
     lines: [{ id: 'L130.0', node: O.file, bytes: 'int open(int extra);\n', after: 'L4.0', before: 'L4.2', replaces: 'L4.1' }],
-  });
+  }));
   const view = inspect(repo, 'dev');
   const snag = view.snags.find((item) => item.kind === 1);
   assert.ok(snag);
@@ -725,12 +726,12 @@ test('T32 a raft whose member has a twin still carries whole, and the twin is ta
   const repo = makeOdbcRepo();
   const ontoRelease = carry(repo, 'release', O.m118);
   assert.equal(ontoRelease.ok, true);
-  checkin(repo, 'dev', script121('int open(int flags);\n'));
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent(script121('int open(int flags);\n')));
+  checkin(repo, 'dev', withIntent({
     id: 'move.Z',
     orderKey: '130',
     lines: [{ id: 'LZ', node: O.file, bytes: '/* raft */\n', after: 'L4.0', before: 'L4.1' }],
-  });
+  }));
   defineRaft(repo, { id: 'twin-raft', members: [O.m121, 'move.Z'] });
   const carried = carryRaft(repo, 'release', 'twin-raft');
   assert.equal(carried.ok, true);
@@ -764,19 +765,19 @@ test('T33 pulling one raft member is allowed and leaves a partly-on notice', () 
 test('T34 carrying a file whose parent pool is absent is refused', () => {
   const repo = makeOdbcRepo();
   forkStream(repo, 'release', 'feature');
-  checkin(repo, 'feature', {
+  checkin(repo, 'feature', withIntent({
     id: 'pool.db',
     orderKey: '50',
     nodes: [{ id: 'p:db', kind: 'pool' }],
     entries: [{ id: 'E:dbpool', pool: O.src, node: 'p:db', name: 'db' }],
-  });
-  checkin(repo, 'feature', {
+  }));
+  checkin(repo, 'feature', withIntent({
     id: 'file.db',
     orderKey: '51',
     nodes: [{ id: 'n:row', kind: 'file' }],
     entries: [{ id: 'E:row', pool: 'p:db', node: 'n:row', name: 'row.c' }],
     lines: [{ id: 'Row', node: 'n:row', bytes: 'int row;\n', after: START, before: END }],
-  });
+  }));
   const before = movesOn(repo, 'dev').slice();
   const events = repo.streams.dev.events.length;
   const refused = carry(repo, 'dev', 'file.db');
@@ -789,7 +790,7 @@ test('T34 carrying a file whose parent pool is absent is refused', () => {
 
 test('T35 pulling a delete brings the file back with edits made since', () => {
   const repo = createRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'seed',
     orderKey: '1',
     nodes: [
@@ -798,15 +799,15 @@ test('T35 pulling a delete brings the file back with edits made since', () => {
     ],
     entries: [{ id: 'Ef', pool: 'root', node: 'f', name: 'F.txt' }],
     lines: [{ id: 'L', node: 'f', bytes: 'old\n', after: START, before: END }],
-  });
+  }));
   forkStream(repo, 'dev', 'feature');
-  checkin(repo, 'dev', { id: 'delete.F', orderKey: '2', entryOff: ['Ef'] });
-  checkin(repo, 'feature', {
+  checkin(repo, 'dev', withIntent({ id: 'delete.F', orderKey: '2', entryOff: ['Ef'] }, { targets: [{ node: 'root' }] }));
+  checkin(repo, 'feature', withIntent({
     id: 'edit.F',
     orderKey: '3',
     off: ['L'],
     lines: [{ id: 'L2', node: 'f', bytes: 'new\n', after: START, before: END, replaces: 'L' }],
-  });
+  }));
   const carried = carry(repo, 'dev', 'edit.F');
   assert.equal(carried.ok, true);
   assert.equal(text(repo, 'dev', 'F.txt'), null);
@@ -865,7 +866,7 @@ test('T38 a script saved without its event stays off and unattached', () => {
 
 test('T39 rebuilding from scripts and the flow log reproduces the tree and the snags', () => {
   const repo = makeOdbcRepo();
-  checkin(repo, 'dev', script121());
+  checkin(repo, 'dev', withIntent(script121()));
   const first = inspect(repo, 'dev');
   repo.rafts = { bogus: { id: 'bogus', members: [] } };
   repo.policy = { case: 'sensitive', unicode: 'nfd', forbidden: 'none', maxPath: 1 };
@@ -908,22 +909,22 @@ test('T40 path identity, inside-repo checks, forbidden names, and max_path', () 
   assert.ok(forbiddenName('a:b'));
   assert.equal(forbiddenName('concert'), null);
 
-  const refusedName = checkin(repo, 'dev', {
+  const refusedName = checkin(repo, 'dev', withIntent({
     id: 'bad.name',
     orderKey: '90',
     nodes: [{ id: 'n:con', kind: 'file' }],
     entries: [{ id: 'E:con', pool: O.src, node: 'n:con', name: 'CON' }],
-  });
+  }));
   assert.equal(refusedName.refused, true);
   assert.equal(repo.scripts['bad.name'], undefined);
 
   setPolicy(repo, { maxPath: 10 });
-  const refusedPath = checkin(repo, 'dev', {
+  const refusedPath = checkin(repo, 'dev', withIntent({
     id: 'long.name',
     orderKey: '91',
     nodes: [{ id: 'n:long', kind: 'file' }],
     entries: [{ id: 'E:long', pool: O.src, node: 'n:long', name: 'toolongname.c' }],
-  });
+  }));
   assert.equal(refusedPath.refused, true);
   assert.match(refusedPath.message, /toolongname\.c/);
   assert.equal(movesOn(repo, 'dev').includes('long.name'), false);

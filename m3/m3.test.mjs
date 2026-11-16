@@ -36,6 +36,7 @@ import {
   V1_BACKPORT_TEXT,
   V1_TEXT,
   V2_TEXT,
+  withIntent,
 } from './fixture.mjs';
 
 function snapshot(repo) {
@@ -49,7 +50,7 @@ function snapshot(repo) {
 
 function fileRepo(lines) {
   const repo = createRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'seed',
     orderKey: '1',
     author: 'ada',
@@ -60,7 +61,7 @@ function fileRepo(lines) {
     ],
     entries: [{ id: 'Ef', pool: 'root', node: 'f', name: 't.txt' }],
     lines,
-  });
+  }));
   return repo;
 }
 
@@ -144,17 +145,17 @@ test('an insert stays in its gap when the right-hand line is replaced', () => {
     { id: 'B', node: 'f', bytes: 'B\n', after: 'A', before: END },
     { id: 'C', node: 'f', bytes: 'C\n', after: 'B', before: END },
   ]);
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'replace',
     orderKey: '2',
     off: ['B'],
     lines: [{ id: 'B2', node: 'f', bytes: 'B2\n', after: 'A', before: 'C', replaces: 'B' }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'insert',
     orderKey: '3',
     lines: [{ id: 'I', node: 'f', bytes: 'I\n', after: 'A', before: 'B' }],
-  });
+  }));
   const view = inspect(repo, 'dev');
   assert.equal(view.files[0].bytes, 'A\nI\nB2\nC\n');
   assert.equal(view.snags.some((snag) => snag.kind === 3), false);
@@ -166,20 +167,20 @@ test('same-gap inserts use order_key, not check-in order, and the snag remains',
     { id: 'A', node: 'f', bytes: 'A\n', after: START, before: END },
     { id: 'B', node: 'f', bytes: 'B\n', after: 'A', before: END },
   ]);
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'later',
     orderKey: '30',
     author: 'bo',
     site: 'bot',
     lines: [{ id: 'S', node: 'f', bytes: 'second\n', after: 'A', before: 'B' }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'earlier',
     orderKey: '10',
     author: 'ada',
     site: 'bot',
     lines: [{ id: 'F', node: 'f', bytes: 'first\n', after: 'A', before: 'B' }],
-  });
+  }));
   const view = inspect(repo, 'dev');
   assert.equal(view.files[0].bytes, 'A\nfirst\nsecond\nB\n');
   assert.equal(view.snags.filter((snag) => snag.kind === 2).length, 1);
@@ -188,12 +189,12 @@ test('same-gap inserts use order_key, not check-in order, and the snag remains',
 
 test('seeing the replacement keeps an after-anchor from becoming kind 3', () => {
   const repo = makeOdbcRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'joy.saw',
     orderKey: '200',
     saw: [O.m118],
     lines: [{ id: 'J1', node: O.file, bytes: '/* saw it */\n', after: 'L4.1', before: 'L4.2' }],
-  });
+  }));
   assert.equal(inspect(repo, 'dev').snags.some((snag) => snag.kind === 3), false);
 });
 
@@ -204,48 +205,48 @@ test('two bots can insert in different gaps, and a third move resolves an overla
     { id: 'C', node: 'f', bytes: 'C\n', after: 'B', before: 'D' },
     { id: 'D', node: 'f', bytes: 'D\n', after: 'C', before: END },
   ]);
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'ada.gap',
     orderKey: '2',
     author: 'ada',
     site: 'bot',
     lines: [{ id: 'Ada', node: 'f', bytes: 'ada\n', after: 'A', before: 'B' }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'bo.gap',
     orderKey: '3',
     author: 'bo',
     site: 'bot',
     lines: [{ id: 'Bo', node: 'f', bytes: 'bo\n', after: 'C', before: 'D' }],
-  });
+  }));
   const calm = inspect(repo, 'dev');
   assert.equal(calm.snags.length, 0);
   assert.equal(calm.files[0].bytes, 'A\nada\nB\nC\nbo\nD\n');
   assert.equal(calm.exportable, true);
 
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'ada.edit',
     orderKey: '4',
     author: 'ada',
     site: 'bot',
     off: ['B'],
     lines: [{ id: 'Bada', node: 'f', bytes: 'one\n', after: 'A', before: 'C', replaces: 'B' }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'bo.edit',
     orderKey: '5',
     author: 'bo',
     site: 'bot',
     off: ['B'],
     lines: [{ id: 'Bbo', node: 'f', bytes: 'two\n', after: 'A', before: 'C', replaces: 'B' }],
-  });
+  }));
   const hit = inspect(repo, 'dev');
   assert.equal(hit.snags.filter((snag) => snag.kind === 1).length, 1);
   assert.equal(hit.exportable, false);
   assert.ok(movesOn(repo, 'dev').includes('ada.edit'));
   assert.ok(movesOn(repo, 'dev').includes('bo.edit'));
 
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'resolution',
     orderKey: '6',
     author: 'ada',
@@ -260,7 +261,7 @@ test('two bots can insert in different gaps, and a third move resolves an overla
     },
     off: ['Bada', 'Bbo'],
     lines: [{ id: 'Both', node: 'f', bytes: 'both\n', after: 'A', before: 'C', replaces: 'B' }],
-  });
+  }));
   const done = inspect(repo, 'dev');
   assert.equal(done.snags.length, 0);
   assert.ok(done.files[0].bytes.includes('both\n'));
@@ -294,20 +295,20 @@ test('redaction tombstones display bytes and keeps the line id and the script', 
 test('a locked node refuses check-in until it is unlocked', () => {
   const repo = makeOdbcRepo();
   lock(repo, 'dev', O.file);
-  const refused = checkin(repo, 'dev', {
+  const refused = checkin(repo, 'dev', withIntent({
     id: 'while.locked',
     orderKey: '300',
     lines: [{ id: 'LockLine', node: O.file, bytes: 'nope\n', after: 'L4.0', before: 'L4.1' }],
-  });
+  }));
   assert.equal(refused.refused, true);
   assert.match(refused.message, /locked/);
   assert.equal(repo.scripts['while.locked'], undefined);
   unlock(repo, 'dev', O.file);
-  const landed = checkin(repo, 'dev', {
+  const landed = checkin(repo, 'dev', withIntent({
     id: 'while.locked',
     orderKey: '300',
     lines: [{ id: 'LockLine', node: O.file, bytes: 'ok\n', after: 'L4.0', before: 'L4.1' }],
-  });
+  }));
   assert.equal(landed.ok, true);
 });
 
@@ -321,7 +322,7 @@ test('the root seed cannot be pulled', () => {
 
 test('an empty pool exports .kawa-keep and import does not turn that into a file', () => {
   const repo = createRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'seed',
     orderKey: '1',
     nodes: [
@@ -329,7 +330,7 @@ test('an empty pool exports .kawa-keep and import does not turn that into a file
       { id: 'docs', kind: 'pool' },
     ],
     entries: [{ id: 'Ed', pool: 'root', node: 'docs', name: 'docs' }],
-  });
+  }));
   const exported = exportStream(repo, 'dev');
   assert.equal(exported.ok, true);
   assert.equal(exported.files['docs/.kawa-keep'], '');
@@ -341,18 +342,18 @@ test('an empty pool exports .kawa-keep and import does not turn that into a file
 test('a policy change that makes names collide is tagged as exposed by that event', () => {
   const repo = makeOdbcRepo();
   setPolicy(repo, { case: 'sensitive' });
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'lower',
     orderKey: '50',
     nodes: [{ id: 'n:r1', kind: 'file' }],
     entries: [{ id: 'E:r1', pool: O.src, node: 'n:r1', name: 'Readme' }],
-  });
-  checkin(repo, 'dev', {
+  }));
+  checkin(repo, 'dev', withIntent({
     id: 'upper',
     orderKey: '51',
     nodes: [{ id: 'n:r2', kind: 'file' }],
     entries: [{ id: 'E:r2', pool: O.src, node: 'n:r2', name: 'README' }],
-  });
+  }));
   assert.equal(inspect(repo, 'dev').snags.some((snag) => snag.kind === 7), false);
   const changed = setPolicy(repo, { case: 'insensitive' });
   const snag = inspect(repo, 'dev').snags.find((item) => item.kind === 7);
@@ -386,7 +387,7 @@ test('forked streams share move identity and then diverge', () => {
 
 test('a bad signature is an event snag and the script stays absent', () => {
   const repo = createRepo();
-  checkin(repo, 'dev', {
+  checkin(repo, 'dev', withIntent({
     id: 'seed',
     orderKey: '1',
     nodes: [
@@ -395,7 +396,7 @@ test('a bad signature is an event snag and the script stays absent', () => {
     ],
     entries: [{ id: 'Ef', pool: 'root', node: 'f', name: 't.txt' }],
     lines: [{ id: 'L', node: 'f', bytes: 'ok\n', after: START, before: END }],
-  });
+  }));
   landEvent(repo, 'dev', { kind: 'checkin', move: 'ghost', site: 'lap' });
   syncScripts(repo, [{
     id: 'ghost',

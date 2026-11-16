@@ -19,6 +19,8 @@ import {
 } from './model.mjs';
 import { directNeedIds, weaveFiles, START, END } from './weave.mjs';
 import { longestPath, poolView, selfConflicts } from './pools.mjs';
+import { checkInRefusal, deriveOps, intentError } from './intent.mjs';
+import { CODE } from './codes.mjs';
 
 export { START, END, DEFAULT_POLICY, insideWorktree, forbiddenName, nameKey };
 
@@ -173,6 +175,7 @@ export function normalizeScript(input) {
       value: attr.value,
     })),
     attrOff: [...(input.attrOff || [])],
+    intent: input.intent === undefined ? undefined : input.intent,
     resolves: input.resolves
       ? {
           kind: input.resolves.kind || '',
@@ -295,6 +298,21 @@ export function checkin(repo, streamName, input) {
   if (repo.scripts[script.id]) {
     return { ok: false, refused: true, message: `move ${script.id} already recorded` };
   }
+  const storeNodes = indexScripts(repo.scripts).nodes;
+  const intentRefusal = checkInRefusal(input, {
+    hasNode: (id) => Object.prototype.hasOwnProperty.call(storeNodes, id),
+  });
+  if (intentRefusal) {
+    const result = {
+      ok: false,
+      refused: true,
+      code: intentRefusal.code,
+      field: intentRefusal.field,
+      message: intentRefusalMessage(intentRefusal),
+    };
+    if (intentRefusal.reason !== undefined) result.reason = intentRefusal.reason;
+    return result;
+  }
   const policy = repo.policy || DEFAULT_POLICY;
   const knownPools = new Set(
     Object.values(indexScripts(repo.scripts).nodes)
@@ -332,9 +350,27 @@ export function checkin(repo, streamName, input) {
     move: script.id,
     site: script.site,
     author: script.author,
+    intent: script.intent,
   });
   const view = inspect(repo, streamName);
-  return { ok: true, id: script.id, event, snags: view.snags, notices: view.notices };
+  return {
+    ok: true,
+    id: script.id,
+    event,
+    snags: view.snags,
+    notices: view.notices,
+    ops_derived: view.ops_derived?.[script.id] || [],
+  };
+}
+
+function intentRefusalMessage(refusal) {
+  if (refusal.code === CODE.intent_missing) {
+    return 'check-in refused: intent block is missing (/intent)';
+  }
+  if (refusal.code === CODE.intent_invalid) {
+    return `check-in refused: intent_invalid ${refusal.reason} at ${refusal.field}`;
+  }
+  return 'check-in refused: move_empty (no records and no resolves section)';
 }
 
 /**
@@ -686,6 +722,7 @@ export function computeView(repo, moveList, policy = repo.policy, scriptOverlay 
     }
   }
 
+  const intentInfo = collectIntentInfo(scripts, idx, moveList);
   const blockers = collectBlockers(snags, notices, eventSnags);
   return {
     moves: moveList.slice(),
@@ -700,6 +737,58 @@ export function computeView(repo, moveList, policy = repo.policy, scriptOverlay 
     reachable: [...pools.reachable],
     visibleEntries: pools.visibleEntries,
     root,
+    ...intentInfo,
+  };
+}
+
+function collectIntentInfo(scripts, idx, moveList) {
+  const intentReports = [];
+  const needReports = [];
+  const opsDerived = Object.create(null);
+  const opsPartial = Object.create(null);
+  const onSet = new Set(moveList);
+  const hasNode = (id) => Object.prototype.hasOwnProperty.call(idx.nodes, id);
+
+  for (const moveId of moveList) {
+    const script = scripts[moveId];
+    if (!script) continue;
+
+    const intent = script.intent;
+    if (intent === undefined || intent === null) {
+      intentReports.push({ move: moveId, code: CODE.intent_missing, field: '/intent' });
+    } else {
+      const error = intentError(intent, moveId, { hasNode });
+      if (error) {
+        intentReports.push({
+          move: moveId,
+          code: CODE.intent_invalid,
+          field: error.field,
+          reason: error.reason,
+        });
+      } else {
+        for (const need of intent.needs) {
+          if (!onSet.has(need)) {
+            needReports.push({
+              move: moveId,
+              need,
+              code: CODE.intent_need_absent,
+              provenance: 'authored_only',
+            });
+          }
+        }
+      }
+    }
+
+    const derived = deriveOps(script, scripts);
+    opsDerived[moveId] = derived.ops;
+    if (derived.partial.length) opsPartial[moveId] = derived.partial.slice();
+  }
+
+  return {
+    intent_reports: intentReports,
+    intent_need_absent: needReports,
+    ops_derived: opsDerived,
+    ops_derived_partial: opsPartial,
   };
 }
 
@@ -860,6 +949,10 @@ export function assemble(repo, arg) {
     blockers: view.blockers,
     exportable: view.exportable,
     moves: view.moves,
+    intent_reports: view.intent_reports,
+    intent_need_absent: view.intent_need_absent,
+    ops_derived: view.ops_derived,
+    ops_derived_partial: view.ops_derived_partial,
   };
 }
 
