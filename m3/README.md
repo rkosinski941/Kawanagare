@@ -22,6 +22,7 @@ node m3/demo.mjs
 - The move-10 backport: refusal without `withNeeds`, one event for the transitive group, then `pull` and `restore`.
 - Anchor ordering: an insert stays in its gap when the right-hand line is replaced; the same gap is ordered by `order_key`, not by who landed first.
 - Two bots in open water on one file, then a resolution move for the overlapping edit. Nothing is auto-resolved.
+- Needs (S3, `needs.test.mjs`): `deriveNeeds` edges `{move_id, via_node_id, reason_code}` with `derive_algo: "needs-v1"`; carry codes `needs_derived_missing`, `parent_pool_missing` (options `[add_parent, refuse]`), `waiver_invalid`, notice `needs_authored_unproven`; single-edge waiver events; `carryPreview`.
 - Mixed CRLF/LF bytes, redaction tombstones, locks, empty-pool `.kawa-keep`, and path checks (segment compare, so `wt2` is not inside `wt`) that do not touch the real disk.
 
 ## Layout
@@ -33,8 +34,10 @@ node m3/demo.mjs
 | `pools.mjs` | Entry records, names, orphans, cycles |
 | `names.mjs` | Repo-path policy and inside-worktree checks |
 | `model.mjs` | The visibility rule and resolution dormancy |
+| `needs.mjs` | Derived needs (`needs-v1`), needs reports, waiver schema |
+| `codes.mjs` | Codes, closed lists, limits (one constants file) |
 | `fixture.mjs` | The `odbc.c` example and the move-10 history |
 | `demo.mjs` | The backport story |
-| `matrix.test.mjs`, `m3.test.mjs` | The suite |
+| `*.test.mjs` | The suite; `index.mjs` imports every file (gate T86) |
 
 `package.json` in this directory only marks the folder as a private ES module so `node --test m3/` can start it. It has no dependencies.

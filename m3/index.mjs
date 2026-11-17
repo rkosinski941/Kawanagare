@@ -11,3 +11,4 @@ import './canon.test.mjs';
 import './intent.pure.test.mjs';
 import './intent.test.mjs';
 import './gate.test.mjs';
+import './needs.test.mjs';

@@ -5,12 +5,40 @@ export const CODE = Object.freeze({
   intent_invalid: 'intent_invalid',
   move_empty: 'move_empty',
   intent_need_absent: 'intent_need_absent',
+  needs_derived_missing: 'needs_derived_missing',
+  parent_pool_missing: 'parent_pool_missing',
+  waiver_invalid: 'waiver_invalid',
+  entry_not_visible: 'entry_not_visible',
 });
 
 export const NOTICE = Object.freeze({
   intent_need_absent: 'intent_need_absent',
   ops_derived_partial: 'ops_derived_partial',
+  needs_authored_unproven: 'needs_authored_unproven',
+  needs_derived_missing: 'needs_derived_missing',
 });
+
+/** S3 (spec 4.9, 12): derived needs. Provisional names (NR-2). */
+export const NEEDS_ALGO = 'needs-v1';
+
+/** Closed list, spec 12 order. Sorting edges uses this order for reason_code. */
+export const NEED_REASONS = Object.freeze([
+  'anchor',
+  'replaces',
+  'switch_off',
+  'parent_pool',
+  'entry_visible',
+  'resolution_input',
+]);
+
+/** parent_pool_missing options, exactly this list and order (spec 4.9, ask_10b: no reparent). */
+export const PARENT_POOL_OPTIONS = Object.freeze(['add_parent', 'refuse']);
+
+/** Waiver payload, closed schema (spec 4.9). The signer is recorded beside it on the event. */
+export const WAIVER_KEYS = Object.freeze(['move_id', 'need_move_id', 'reason']);
+
+/** Provenance values for intent_need_absent (spec Intent block, assemble). */
+export const PROVENANCE = Object.freeze(['derived', 'authored_only']);
 
 export const CANON_REASONS = Object.freeze([
   'float',

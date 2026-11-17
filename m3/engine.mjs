@@ -17,10 +17,13 @@ import {
   dormantReason,
   indexScripts,
 } from './model.mjs';
-import { directNeedIds, weaveFiles, START, END } from './weave.mjs';
+import { weaveFiles, START, END } from './weave.mjs';
 import { longestPath, poolView, selfConflicts } from './pools.mjs';
 import { checkInRefusal, deriveOps, intentError } from './intent.mjs';
-import { CODE, NOTICE } from './codes.mjs';
+import { CODE, NOTICE, NEEDS_ALGO, PARENT_POOL_OPTIONS } from './codes.mjs';
+import { cmpCodeUnit, derivedIds, needsReportFor, waiverError } from './needs.mjs';
+
+export { deriveNeeds, needsReport, waiverError } from './needs.mjs';
 
 export { START, END, DEFAULT_POLICY, insideWorktree, forbiddenName, nameKey };
 
@@ -32,6 +35,8 @@ export function createRepo() {
     seq: 0,
     rafts: Object.create(null),
     redactions: [],
+    waivers: [],
+    waiversInvalid: [],
     policy: { ...DEFAULT_POLICY },
   };
   return repo;
@@ -40,6 +45,8 @@ export function createRepo() {
 export function project(repo) {
   repo.rafts = Object.create(null);
   repo.redactions = [];
+  repo.waivers = [];
+  repo.waiversInvalid = [];
   repo.policy = { ...DEFAULT_POLICY };
   const events = repo.repoEvents.slice().sort((a, b) => a.seq - b.seq);
   for (const ev of events) {
@@ -49,6 +56,20 @@ export function project(repo) {
       repo.policy = { ...repo.policy, ...ev.policy, eventId: ev.id };
     } else if (ev.kind === 'redact') {
       repo.redactions.push({ lineId: ev.lineId, marker: ev.marker, eventId: ev.id });
+    } else if (ev.kind === 'waiver') {
+      const error = waiverError(ev.waiver, ev.signer);
+      if (error) {
+        const moveId = ev.waiver && typeof ev.waiver === 'object' ? ev.waiver.move_id : undefined;
+        repo.waiversInvalid.push({ eventId: ev.id, move_id: moveId, field: error.field, reason: error.reason });
+      } else {
+        repo.waivers.push({
+          eventId: ev.id,
+          move_id: ev.waiver.move_id,
+          need_move_id: ev.waiver.need_move_id,
+          reason: ev.waiver.reason,
+          signer: ev.signer,
+        });
+      }
     }
   }
   return repo;
@@ -391,18 +412,26 @@ export function proposeNeeds(repo, streamName, moveId) {
   return analyzeNeeds(repo, moveId, on);
 }
 
-function analyzeNeeds(repo, moveId, onList) {
+function analyzeNeeds(repo, moveId, onList, waiverFor = null) {
   const onSet = new Set(onList);
   const idx = indexScripts(repo.scripts);
   const seen = new Set();
   const full = [];
+  const pruned = [];
   const visit = (id) => {
     if (seen.has(id)) return;
     seen.add(id);
     const sc = repo.scripts[id];
     if (!sc || sc.signature === 'bad') return;
-    const needs = directNeedIds(idx, sc).slice().sort(cmpOrderKey);
-    for (const need of needs) visit(need);
+    const needs = derivedIds(idx, sc).sort(cmpOrderKey);
+    for (const need of needs) {
+      const waiver = waiverFor ? waiverFor(id, need) : null;
+      if (waiver) {
+        pruned.push({ move_id: id, need_move_id: need, event: waiver.eventId });
+        continue;
+      }
+      visit(need);
+    }
     full.push(id);
   };
   visit(moveId);
@@ -410,7 +439,11 @@ function analyzeNeeds(repo, moveId, onList) {
   const missing = proposed.filter((id) => id !== moveId);
   const extended = [...onList, ...proposed];
   const problems = poolProblems(repo, moveId, extended);
-  return { missing, proposed, problems, full };
+  const inFull = new Set(full);
+  const waived = pruned
+    .filter((edge) => !onSet.has(edge.need_move_id) && !inFull.has(edge.need_move_id))
+    .sort((a, b) => cmpCodeUnit(a.move_id, b.move_id) || cmpCodeUnit(a.need_move_id, b.need_move_id));
+  return { missing, proposed, problems, full, waived };
 }
 
 function poolProblems(repo, moveId, moveList) {
@@ -439,59 +472,218 @@ function poolProblems(repo, moveId, moveList) {
   return problems;
 }
 
-export function carry(repo, streamName, moveId, opts = {}) {
+/**
+ * Carry planning (spec 4.9). Read-only. Shared by carry and carryPreview so the preview is
+ * exactly what carry does. Refusal order (D-S3-06): waiver_invalid, parent_pool_missing,
+ * needs_derived_missing, entry_not_visible. Without withNeeds, recorded waivers prune exactly
+ * their edge; withNeeds carries the full group and does not consult waivers (D-S3-08).
+ */
+function planCarry(repo, streamName, moveId, opts = {}) {
   const withNeeds = !!opts.withNeeds;
   const on = repo.streams[streamName] ? fold(repo, streamName).on : [];
   if (on.includes(moveId)) {
-    return { ok: true, alreadyOn: true, added: [], message: `already on in ${streamName}; nothing to do` };
+    return { state: 'already', result: { ok: true, alreadyOn: true, added: [], message: `already on in ${streamName}; nothing to do` } };
   }
   const script = repo.scripts[moveId];
   if (!script || script.signature === 'bad') {
-    return { ok: false, refused: true, missing: [], proposed: [], message: `carry of ${moveId} refused: script missing` };
-  }
-  const analysis = analyzeNeeds(repo, moveId, on);
-  const blocked = analysis.missing.length > 0 || analysis.problems.length > 0;
-  if (blocked && !withNeeds) {
     return {
-      ok: false,
-      refused: true,
-      missing: analysis.missing.slice(),
-      proposed: analysis.proposed.slice(),
-      problems: analysis.problems.slice(),
-      group: `needs:${moveId}`,
-      message: refusalMessage(streamName, moveId, script, analysis),
+      state: 'refuse',
+      result: { ok: false, refused: true, missing: [], proposed: [], message: `carry of ${moveId} refused: script missing` },
     };
   }
-  if (analysis.problems.length) {
+  const idx = indexScripts(repo.scripts);
+  const report = needsReportFor(idx, script, moveId);
+
+  if (!withNeeds) {
+    const bad = (repo.waiversInvalid || []).filter((item) => item.move_id === moveId);
+    if (bad.length) {
+      const first = bad[0];
+      return {
+        state: 'refuse',
+        result: {
+          ok: false,
+          refused: true,
+          code: CODE.waiver_invalid,
+          move: moveId,
+          event: first.eventId,
+          field: first.field,
+          reason: first.reason,
+          missing: [],
+          proposed: [],
+          needs_report: report,
+          notices: [],
+          message: `carry of ${moveId} refused: waiver_invalid ${first.reason} at ${first.field} (event ${first.eventId})`,
+        },
+      };
+    }
+  }
+
+  const waiverFor = withNeeds
+    ? null
+    : (from, need) => (repo.waivers || []).find((w) => w.move_id === from && w.need_move_id === need) || null;
+  const analysis = analyzeNeeds(repo, moveId, on, waiverFor);
+  const groupProblems = analysis.problems;
+  const landList = withNeeds ? [...on, ...analysis.proposed] : [...on, moveId];
+  const landProblems = withNeeds ? groupProblems : poolProblems(repo, moveId, landList);
+  const parentMissing = landProblems
+    .filter((problem) => problem.code === 'parent_unreachable')
+    .map((problem) => {
+      const entry = script.entries.find((item) => item.id === problem.entry);
+      return {
+        node_id: problem.pool,
+        parent_move_id: idx.nodes[problem.pool]?.addedBy ?? null,
+        child_node_id: entry ? entry.node : null,
+        entry_id: problem.entry,
+        options: [...PARENT_POOL_OPTIONS],
+      };
+    });
+  const entryMissing = landProblems.filter((problem) => problem.code === 'entry_not_visible');
+  const missing = withNeeds ? [] : analysis.missing;
+
+  const base = {
+    ok: false,
+    refused: true,
+    move: moveId,
+    missing: analysis.missing.slice(),
+    proposed: analysis.proposed.slice(),
+    problems: groupProblems.slice(),
+    group: `needs:${moveId}`,
+    group_moves: analysis.proposed.slice(),
+    needs_report: report,
+    notices: [],
+  };
+  if (parentMissing.length) {
+    const first = parentMissing[0];
     return {
-      ok: false,
-      refused: true,
-      missing: analysis.missing.slice(),
-      proposed: analysis.proposed.slice(),
-      problems: analysis.problems.slice(),
-      group: `needs:${moveId}`,
-      message: refusalMessage(streamName, moveId, script, analysis),
+      state: 'refuse',
+      result: {
+        ...base,
+        code: CODE.parent_pool_missing,
+        node_id: first.node_id,
+        parent_move_id: first.parent_move_id,
+        options: [...PARENT_POOL_OPTIONS],
+        parent_pool_missing: parentMissing,
+        message: `carry of ${moveId} refused: parent_pool_missing: pool ${first.node_id} is not reachable in ${streamName}; parent move ${first.parent_move_id ?? 'unknown'}; options add_parent (withNeeds) or refuse`,
+      },
     };
   }
-  const added = analysis.proposed.slice();
-  const event = appendEvent(repo, streamName, {
+  if (missing.length) {
+    return {
+      state: 'refuse',
+      result: {
+        ...base,
+        code: CODE.needs_derived_missing,
+        move_ids: missing.slice(),
+        message: refusalMessage(streamName, moveId, script, analysis),
+      },
+    };
+  }
+  if (entryMissing.length) {
+    return {
+      state: 'refuse',
+      result: {
+        ...base,
+        code: CODE.entry_not_visible,
+        entry_ids: entryMissing.map((problem) => problem.entry),
+        message: refusalMessage(streamName, moveId, script, { ...analysis, problems: landProblems }),
+      },
+    };
+  }
+
+  const notices = [];
+  if (report.needs_authored_only.length) {
+    notices.push({
+      code: NOTICE.needs_authored_unproven,
+      move: moveId,
+      move_ids: report.needs_authored_only.slice(),
+      derive_algo: NEEDS_ALGO,
+    });
+  }
+  if (analysis.waived.length) {
+    notices.push({
+      code: NOTICE.needs_derived_missing,
+      move: moveId,
+      move_ids: [...new Set(analysis.waived.map((edge) => edge.need_move_id))].sort(cmpCodeUnit),
+      waived: analysis.waived.map((edge) => ({ ...edge })),
+      derive_algo: NEEDS_ALGO,
+    });
+  }
+  const added = withNeeds ? analysis.proposed.slice() : [moveId];
+  const grouped = withNeeds && analysis.missing.length > 0;
+  return {
+    state: 'land',
+    added,
+    grouped,
+    waived: analysis.waived,
+    result: {
+      ok: true,
+      added,
+      proposed: added.slice(),
+      missingWere: withNeeds ? analysis.missing.slice() : [],
+      group: grouped ? `needs:${moveId}` : null,
+      needs_report: report,
+      notices,
+      message: grouped
+        ? `carried needs group ${added.join(', ')} into ${streamName}`
+        : `carried ${moveId} into ${streamName}`,
+    },
+  };
+}
+
+/** Read-only carry preview: the same reply carry would give, with no event (spec 4.9, 4.11). */
+export function carryPreview(repo, streamName, moveId, opts = {}) {
+  const plan = planCarry(repo, streamName, moveId, opts);
+  if (plan.state !== 'land') return { ...plan.result, preview: true };
+  return { ...plan.result, preview: true, would_add: plan.added.slice() };
+}
+
+export function carry(repo, streamName, moveId, opts = {}) {
+  const plan = planCarry(repo, streamName, moveId, opts);
+  if (plan.state !== 'land') return plan.result;
+  const partial = {
     kind: 'carry',
     move: moveId,
-    moves: added,
-    via: analysis.missing.length ? 'with-needs' : 'carry',
-    group: analysis.missing.length ? `needs:${moveId}` : null,
-  });
-  return {
-    ok: true,
-    added,
-    proposed: added.slice(),
-    missingWere: analysis.missing.slice(),
-    group: analysis.missing.length ? `needs:${moveId}` : null,
-    event,
-    message: analysis.missing.length
-      ? `carried needs group ${added.join(', ')} into ${streamName}`
-      : `carried ${moveId} into ${streamName}`,
+    moves: plan.added.slice(),
+    via: plan.grouped ? 'with-needs' : 'carry',
+    group: plan.grouped ? `needs:${moveId}` : null,
   };
+  if (plan.waived.length) partial.waivers = [...new Set(plan.waived.map((edge) => edge.event))];
+  const event = appendEvent(repo, streamName, partial);
+  return { ...plan.result, event };
+}
+
+/**
+ * Record a needs waiver as a signed repo event (spec 4.9). One edge per event. The signer is a
+ * recorded field; who may sign is NR-11 and is not checked here. A malformed waiver is refused
+ * waiver_invalid and nothing is appended. The same edge waived twice is a no-op (D-S3-09).
+ */
+export function recordWaiver(repo, waiver, opts = {}) {
+  const signer = opts.signer;
+  const error = waiverError(waiver, signer);
+  if (error) {
+    return {
+      ok: false,
+      refused: true,
+      code: CODE.waiver_invalid,
+      field: error.field,
+      reason: error.reason,
+      message: `waiver refused: waiver_invalid ${error.reason} at ${error.field}`,
+    };
+  }
+  const existing = (repo.waivers || []).find(
+    (w) => w.move_id === waiver.move_id && w.need_move_id === waiver.need_move_id,
+  );
+  if (existing) {
+    return { ok: true, alreadyWaived: true, event: null, eventId: existing.eventId, message: 'edge already waived; nothing to do' };
+  }
+  const event = allocEvent(repo, {
+    kind: 'waiver',
+    waiver: { move_id: waiver.move_id, need_move_id: waiver.need_move_id, reason: waiver.reason },
+    signer,
+  });
+  repo.repoEvents.push(event);
+  project(repo);
+  return { ok: true, event, message: `waived need ${waiver.need_move_id} of ${waiver.move_id}` };
 }
 
 function refusalMessage(streamName, moveId, script, analysis) {
@@ -744,6 +936,7 @@ export function computeView(repo, moveList, policy = repo.policy, scriptOverlay 
 function collectIntentInfo(scripts, idx, moveList) {
   const intentReports = [];
   const needReports = [];
+  const needsReports = Object.create(null);
   const opsDerived = Object.create(null);
   const opsPartial = Object.create(null);
   const onSet = new Set(moveList);
@@ -752,6 +945,10 @@ function collectIntentInfo(scripts, idx, moveList) {
   for (const moveId of moveList) {
     const script = scripts[moveId];
     if (!script) continue;
+
+    const report = needsReportFor(idx, script, moveId);
+    needsReports[moveId] = report;
+    const derivedLookup = new Set(report.needs_derived.map((edge) => edge.move_id));
 
     const intent = script.intent;
     if (intent === undefined || intent === null) {
@@ -772,7 +969,7 @@ function collectIntentInfo(scripts, idx, moveList) {
               move: moveId,
               need,
               code: CODE.intent_need_absent,
-              provenance: 'authored_only',
+              provenance: derivedLookup.has(need) ? 'derived' : 'authored_only',
             };
             needReports.push(report);
             intentReports.push({ ...report });
@@ -794,6 +991,7 @@ function collectIntentInfo(scripts, idx, moveList) {
     intent_need_absent: needReports,
     ops_derived: opsDerived,
     ops_derived_partial: opsPartial,
+    needs_reports: needsReports,
   };
 }
 
@@ -958,6 +1156,7 @@ export function assemble(repo, arg) {
     intent_need_absent: view.intent_need_absent,
     ops_derived: view.ops_derived,
     ops_derived_partial: view.ops_derived_partial,
+    needs_reports: view.needs_reports,
   };
 }
 
