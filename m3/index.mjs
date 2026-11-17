@@ -7,3 +7,7 @@
  */
 import './matrix.test.mjs';
 import './m3.test.mjs';
+import './canon.test.mjs';
+import './intent.pure.test.mjs';
+import './intent.test.mjs';
+import './gate.test.mjs';
