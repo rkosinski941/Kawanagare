@@ -18,7 +18,7 @@ const isObject = (value) => value !== null && typeof value === 'object' && !Arra
 const compareKeys = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const refusal = (field, reason) => ({ field, reason });
 
-function statementError(value, field) {
+export function statementError(value, field) {
   if (typeof value !== 'string') return refusal(field, 'wrong_type');
   if (LONE.test(value)) return refusal(field, 'lone_surrogate');
   if (value.length === 0) return refusal(field, 'empty');
