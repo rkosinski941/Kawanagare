@@ -33,17 +33,65 @@ export function weaveFiles(idx, scripts, moveList, activeRes, redactions) {
   }
   for (const group of replacers.values()) group.sort((a, b) => cmpLine(scripts, a, b));
 
-  const tombstones = [];
+  // Slot owners for ordering (D-M1-08, G-55). A replacement occupies the slot of the
+  // line it replaces (spec 2 rule 3). When that line is itself a replacement that is no
+  // longer visible, the slot is the older line's slot too: walk the `replaces` chain up
+  // through lines that are not visible and stop at the first visible one. Ordering and
+  // tombstones use these owners; snag rules keep the direct `replacers` map.
+  const visibleIds = new Set(visible.map((v) => v.id));
+  const slots = new Map();
+  for (const line of visible) {
+    let ref = line.replaces;
+    const walked = new Set();
+    while (ref && !walked.has(ref)) {
+      walked.add(ref);
+      if (!slots.has(ref)) slots.set(ref, []);
+      slots.get(ref).push(line);
+      if (visibleIds.has(ref)) break;
+      const up = idx.lines[ref];
+      ref = up ? up.replaces : null;
+    }
+  }
+
+  const tombCandidates = [];
   for (const line of Object.values(idx.lines)) {
-    if (visible.some((v) => v.id === line.id)) continue;
+    if (visibleIds.has(line.id)) continue;
     if (!onSet.has(line.addedBy)) continue;
     const maker = scripts[line.addedBy];
     if (!maker || (maker.resolves && !activeRes.has(maker.id))) continue;
-    if (replacers.has(line.id) && replacers.get(line.id).length) continue;
+    if (slots.has(line.id) && slots.get(line.id).length) continue;
     const offs = idx.lineOffBy[line.id] || [];
     const switched = offs.some((moveId) => onSet.has(moveId) && effectsCount(scripts, moveId, activeRes));
-    if (switched) tombstones.push(line);
+    if (switched) tombCandidates.push(line);
   }
+
+  // A switched-off replacement whose slot has no visible owner keeps that slot as the
+  // tombstone (D-M1-08): the lines it replaced, directly or through other switched-off
+  // replacements, do not become separate tombstones.
+  const tombWalk = new Map();
+  const occupied = new Set();
+  for (const line of tombCandidates) {
+    const refs = [];
+    let ref = line.replaces;
+    const walked = new Set();
+    while (ref && !walked.has(ref) && !visibleIds.has(ref) && !slots.has(ref)) {
+      walked.add(ref);
+      refs.push(ref);
+      occupied.add(ref);
+      const up = idx.lines[ref];
+      ref = up ? up.replaces : null;
+    }
+    if (refs.length) tombWalk.set(line, refs);
+  }
+  const tombstones = tombCandidates.filter((line) => !occupied.has(line.id));
+  for (const [line, refs] of tombWalk) {
+    if (occupied.has(line.id)) continue;
+    for (const ref of refs) {
+      if (!slots.has(ref)) slots.set(ref, []);
+      slots.get(ref).push(line);
+    }
+  }
+  for (const group of slots.values()) group.sort((a, b) => cmpLine(scripts, a, b));
 
   const byNodeIds = new Map();
   for (const line of visible) {
@@ -54,7 +102,7 @@ export function weaveFiles(idx, scripts, moveList, activeRes, redactions) {
   const byNode = new Map();
   for (const [node, lines] of byNodeIds) {
     const nodeTombs = tombstones.filter((t) => t.node === node);
-    const ordered = orderVisible(idx, scripts, lines, nodeTombs, replacers);
+    const ordered = orderVisible(idx, scripts, lines, nodeTombs, slots);
     const bytes = ordered.map((line) => shownBytes(line, redactions)).join('');
     byNode.set(node, { lines: ordered, bytes, lineIds: ordered.map((line) => line.id) });
   }
@@ -111,10 +159,17 @@ export function orderVisible(idx, scripts, visibleLines, tombstones, replacers) 
   }
 
   function anchorsFor(line) {
-    if (line.replaces && idx.lines[line.replaces]) {
-      const orig = idx.lines[line.replaces];
-      return { after: orig.after, before: orig.before };
+    // A replacement takes the slot of the line it replaces; for a chain of
+    // replacements that is the slot of the first line in the chain (D-M1-08).
+    let orig = null;
+    let ref = line.replaces;
+    const walked = new Set();
+    while (ref && idx.lines[ref] && !walked.has(ref)) {
+      walked.add(ref);
+      orig = idx.lines[ref];
+      ref = orig.replaces;
     }
+    if (orig) return { after: orig.after, before: orig.before };
     return { after: line.after, before: line.before };
   }
 
