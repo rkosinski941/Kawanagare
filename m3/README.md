@@ -24,6 +24,7 @@ node m3/demo.mjs
 - Two bots in open water on one file, then a resolution move for the overlapping edit. Nothing is auto-resolved.
 - Needs (S3, `needs.test.mjs`): `deriveNeeds` edges `{move_id, via_node_id, reason_code}` with `derive_algo: "needs-v1"`; carry codes `needs_derived_missing`, `parent_pool_missing` (options `[add_parent, refuse]`), `waiver_invalid`, notice `needs_authored_unproven`; single-edge waiver events; `carryPreview`.
 - Raft carry (G-41, `raft.test.mjs`): same refusal codes, order and waiver rule as a single-move carry; problem objects carry `needs_report`, `notices` and, for `parent_pool_missing`, `parent_move_id` and `child_node_id`; a landed raft reports the waived-edge `needs_derived_missing` notice.
+- Kind 5 same-move exemption (`kind5.test.mjs`): a pure mid-file delete of B in A,B,C views `a\nc\n` and exports; a later insert anchored on B is still kind 5 (T07).
 - Mixed CRLF/LF bytes, redaction tombstones, locks, empty-pool `.kawa-keep`, and path checks (segment compare, so `wt2` is not inside `wt`) that do not touch the real disk.
 
 ## Layout
