@@ -156,11 +156,14 @@ lines:
 1. Lines in one move's script keep the order they were written.
 2. A new line sits strictly between its resolved `after` and its resolved `before`.
 3. A replacement occupies the slot of the line it replaces. Its place comes from that line's anchors, not from a second copy of the text.
+   Chain (D-M1-08): when the replaced line is itself a replacement, the slot is that of the first line in the chain; a switched-off replacement with no visible successor holds the slot as the tombstone.
 4. If the `after` or `before` line was replaced, the anchor resolves to the visible replacement (or replacements) in that slot. The insert stays in the same gap. Replacing the right-hand line does not throw the insert out of the gap, and it does not by itself raise a snag.
 5. If the anchor line was switched off and nothing replaces it, the line remains in the order graph as a **tombstone**: neighbors keep their places, the tombstone is omitted from the visible text, and the anchor is snag kind 5.
    Exception (D-K5-01): a line minted by the **same move** as its switched-off `after` or `before` anchor (that anchor's original neighbor) is not kind 5. A pure mid-file delete of B in seed lines A,B,C views `a\nc\n` and exports. A line from a later move that anchors on the switched-off line is still kind 5 (T07). A lost `replaces` anchor is never exempt.
 6. If two moves put lines in the **same gap** (the same `after` and `before` on the same node), that is snag kind 2. Kawa still shows them, in `order_key` order, then by position in the script, then by line id. That order is display only. It is not a decision, and it does not follow who checked in first (T03).
 7. A **redaction** is a tombstone event on a line. The line id stays. The script keeps the original bytes (signatures cover them). Assemble and export show the redaction marker instead. A leaked secret still needs rotating.
+
+**Minting lines (mint-v1, G-49).** A tool that turns a before-view and after bytes of one file node into line records uses `derive_algo: mint-v1`. Split after each `\n` (the `\n` stays on the line; a lone `\r` does not split; a last line without `\n` is a line). Keep the common prefix, then the common suffix. Align the rest by longest common subsequence over exact bytes, walking forward; when switching off the before line and adding the after line keep an equally long subsequence, switch off first (deletions first). In each run between two kept lines, the k-th new line `replaces` the k-th switched-off line; extra new lines are plain inserts and extra switch-offs stand alone. A new line's `after` is the line before it in the after-view (`START` at the top) and its `before` is the next kept line (`END` at the bottom). Line ids are `L:<move>:<n>`. Reference: `m3/mint.mjs`.
 
 `eol` and `encoding` are display hints. Export writes the stored bytes and turns git newline conversion off. A line that is not valid UTF-8 is still a line.
 
