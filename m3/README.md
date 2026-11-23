@@ -23,6 +23,7 @@ node m3/demo.mjs
 - Anchor ordering: an insert stays in its gap when the right-hand line is replaced; the same gap is ordered by `order_key`, not by who landed first.
 - Two bots in open water on one file, then a resolution move for the overlapping edit. Nothing is auto-resolved.
 - Needs (S3, `needs.test.mjs`): `deriveNeeds` edges `{move_id, via_node_id, reason_code}` with `derive_algo: "needs-v1"`; carry codes `needs_derived_missing`, `parent_pool_missing` (options `[add_parent, refuse]`), `waiver_invalid`, notice `needs_authored_unproven`; single-edge waiver events; `carryPreview`.
+- Raft carry (G-41, `raft.test.mjs`): same refusal codes, order and waiver rule as a single-move carry; problem objects carry `needs_report`, `notices` and, for `parent_pool_missing`, `parent_move_id` and `child_node_id`; a landed raft reports the waived-edge `needs_derived_missing` notice.
 - Mixed CRLF/LF bytes, redaction tombstones, locks, empty-pool `.kawa-keep`, and path checks (segment compare, so `wt2` is not inside `wt`) that do not touch the real disk.
 
 ## Layout
