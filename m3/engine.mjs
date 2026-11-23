@@ -718,26 +718,38 @@ export function carryRaft(repo, streamName, raftId) {
   const todo = raft.members.filter((id) => !onSet.has(id));
   const extended = [...on, ...todo];
   const problems = [];
+  // Proposed (sample run v2, G-41): same codes, order and waiver rule as a single-move carry
+  // (D-S3-06, D-S3-08 without withNeeds). One code per reply: the first in refusal order.
+  const waiverFor = (from, need) => (repo.waivers || []).find((w) => w.move_id === from && w.need_move_id === need) || null;
+  const RANK = [CODE.waiver_invalid, CODE.parent_pool_missing, CODE.needs_derived_missing, CODE.entry_not_visible, 'script_missing'];
   for (const moveId of todo) {
     const script = repo.scripts[moveId];
     if (!script) {
       problems.push({ move: moveId, code: 'script_missing' });
       continue;
     }
-    const analysis = analyzeNeeds(repo, moveId, extended.filter((id) => id !== moveId));
+    const bad = (repo.waiversInvalid || []).find((item) => item.move_id === moveId);
+    if (bad) problems.push({ move: moveId, code: CODE.waiver_invalid, event: bad.eventId, field: bad.field, reason: bad.reason });
+    const analysis = analyzeNeeds(repo, moveId, extended.filter((id) => id !== moveId), waiverFor);
     const missing = analysis.missing.filter((id) => !raft.members.includes(id) && !onSet.has(id));
-    if (missing.length) problems.push({ move: moveId, missing });
     const pool = poolProblems(repo, moveId, extended);
-    if (pool.length) problems.push({ move: moveId, problems: pool });
+    for (const item of pool.filter((p) => p.code === 'parent_unreachable')) {
+      problems.push({ move: moveId, code: CODE.parent_pool_missing, node_id: item.pool, entry_id: item.entry, options: [...PARENT_POOL_OPTIONS] });
+    }
+    if (missing.length) problems.push({ move: moveId, code: CODE.needs_derived_missing, move_ids: missing });
+    const hidden = pool.filter((p) => p.code === 'entry_not_visible').map((p) => p.entry);
+    if (hidden.length) problems.push({ move: moveId, code: CODE.entry_not_visible, entry_ids: hidden });
   }
   if (problems.length) {
+    problems.sort((a, b) => RANK.indexOf(a.code) - RANK.indexOf(b.code));
     return {
       ok: false,
       refused: true,
+      code: problems[0].code,
       added: [],
       skipped,
       problems,
-      message: `raft ${raftId} refused: ${problems.map((problem) => problem.move).join(', ')}`,
+      message: `raft ${raftId} refused: ${problems[0].code}: ${[...new Set(problems.map((problem) => problem.move))].join(', ')}`,
     };
   }
   const event = appendEvent(repo, streamName, {
