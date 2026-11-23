@@ -290,6 +290,12 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers) {
     for (const anchor of [line.after, line.before, line.replaces]) {
       if (!anchor || anchor === START || anchor === END) continue;
       const target = idx.lines[anchor];
+      // Kind 5 same-move exemption (D-K5-01): a line minted in the same move as its
+      // `after`/`before` anchor is that anchor's original neighbour, not a later insert.
+      // When the anchor is switched off with no replacement (a pure deletion), the anchor
+      // stays in the order graph as a tombstone and the neighbour keeps its place, so
+      // nothing is lost. Same rule as the kind 3 skip above. `replaces` is not exempt.
+      if (target && anchor !== line.replaces && target.addedBy === line.addedBy) continue;
       if (!target) {
         if (waitingMoves.length === 0) {
           snags.push({

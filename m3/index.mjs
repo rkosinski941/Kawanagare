@@ -12,3 +12,5 @@ import './intent.pure.test.mjs';
 import './intent.test.mjs';
 import './gate.test.mjs';
 import './needs.test.mjs';
+import './raft.test.mjs';
+import './kind5.test.mjs';

@@ -158,6 +158,7 @@ lines:
 3. A replacement occupies the slot of the line it replaces. Its place comes from that line's anchors, not from a second copy of the text.
 4. If the `after` or `before` line was replaced, the anchor resolves to the visible replacement (or replacements) in that slot. The insert stays in the same gap. Replacing the right-hand line does not throw the insert out of the gap, and it does not by itself raise a snag.
 5. If the anchor line was switched off and nothing replaces it, the line remains in the order graph as a **tombstone**: neighbors keep their places, the tombstone is omitted from the visible text, and the anchor is snag kind 5.
+   Exception (D-K5-01): a line minted by the **same move** as its switched-off `after` or `before` anchor (that anchor's original neighbor) is not kind 5. A pure mid-file delete of B in seed lines A,B,C views `a\nc\n` and exports. A line from a later move that anchors on the switched-off line is still kind 5 (T07). A lost `replaces` anchor is never exempt.
 6. If two moves put lines in the **same gap** (the same `after` and `before` on the same node), that is snag kind 2. Kawa still shows them, in `order_key` order, then by position in the script, then by line id. That order is display only. It is not a decision, and it does not follow who checked in first (T03).
 7. A **redaction** is a tombstone event on a line. The line id stays. The script keeps the original bytes (signatures cover them). Assemble and export show the redaction marker instead. A leaked secret still needs rotating.
 
