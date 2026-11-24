@@ -30,10 +30,16 @@ export const MINT_MAX_CELLS = 16777216;
 /**
  * Split raw bytes into lines. A line ends after each "\n" and keeps it, so
  * "\r\n" stays with its line. A lone "\r" is not a line end. A last line with
- * no "\n" is still a line. Empty input gives no lines. (D-M1-01)
+ * no "\n" is still a line, so a "\r" after the last "\n" is its own line. Empty input
+ * gives no lines. (D-M1-01) Input must be a string (D-M1-14).
  */
 export function splitLines(bytes) {
-  const s = String(bytes ?? '');
+  // D-M1-14: text only. A Buffer would be decoded (invalid UTF-8 -> U+FFFD) and a
+  // Uint8Array would become "97,10,..."; both break byte fidelity, so refuse them.
+  if (typeof bytes !== 'string') {
+    throw new TypeError('mint-v1 takes file content as a string in the same encoding as stored line bytes');
+  }
+  const s = bytes;
   const out = [];
   let i = 0;
   while (i < s.length) {
@@ -106,7 +112,9 @@ export function mintLineId(moveId, n) {
  * @param {string} node file node id
  * @param {{id: string, bytes: string}[]} before visible lines of the node in view order
  *   (stored bytes, not redaction markers); see `beforeFromView`
- * @param {string} afterBytes the whole new content of the file
+ * @param {string} afterBytes the whole new content of the file, as a string in the same
+ *   encoding as the stored `line.bytes` of `before` (D-M1-14); never a Buffer or Uint8Array.
+ *   mint-v1 never normalizes line endings: CRLF and LF lines differ.
  * @param {string} moveId the move that will carry these records
  * @param {{firstIndex?: number}} [opts] first `n` for `L:<move>:<n>` (default 0), so one
  *   move can mint several nodes without id clashes

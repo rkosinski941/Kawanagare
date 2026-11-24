@@ -576,12 +576,14 @@ test('M1-21 chain whose last link is switched off with no replacement: kind 5, n
   assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot, snag.lines]), [[5, 'L:seed:0', ['L:insert:0']]]);
 });
 
-test('M1-22 chain with the first link pulled: the dangling link is kind 4; no kind 3 from a line whose slot owner is gone', () => {
+test('M1-22 chain with the first link pulled: only the dangling link (kind 4); no kind 3 on the visible base line (D-M1-15)', () => {
   const repo = chainRepo([['r1', 'A\n'], ['r2', 'AA\n']]);
   assert.equal(pull(repo, 'dev', 'r1').ok, true);
   const view = inspect(repo, 'dev');
-  const kinds = view.snags.map((snag) => snag.kind).sort();
-  assert.equal(kinds.includes(4), true);
+  // D-M1-15: the walk does not climb past r1's line (maker off), so the visible seed
+  // line is not "replaced" and there is no kind 3; only the dangling link (kind 4).
+  assert.equal(fileOf(view).bytes, 'a\nAA\nx\n');
+  assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot]), [[4, 'L:r1:0']]);
   assert.equal(view.exportable, false);
 });
 
@@ -706,6 +708,88 @@ test('M1-23 two-author fuzz (400 seeded rows): snags equal the rule prediction; 
   assert.ok(stats.snagRows > 50, `fuzz too tame: ${JSON.stringify(stats)}`);
   for (const kind of ['1', '2', '3', '5']) assert.ok(stats.kinds[kind] > 0, `kind ${kind} never exercised: ${JSON.stringify(stats)}`);
   if (process.env.KAWA_FUZZ_STATS) console.log(JSON.stringify(stats));
+});
+
+// ---------------------------------------------------------------- DeepSeek review of PR #16 (pins and fixes)
+
+function handIn(repo, stream, script) {
+  const res = checkin(repo, stream, withIntent(script, { targets: [{ node: FILE }] }));
+  assert.equal(res.ok, true, res.message);
+}
+
+test('M1-24 mint takes strings only (D-M1-14): Buffer, Uint8Array, number throw; a "\\r" after the last "\\n" is its own line', () => {
+  const enc = new TextEncoder();
+  assert.throws(() => mintScript('n', [], enc.encode('a\r\nb\n'), 'm'), TypeError);
+  assert.throws(() => mintScript('n', [], Buffer.from([0x61, 0xff, 0x0a]), 'm'), TypeError);
+  assert.throws(() => mintScript('n', [], 42, 'm'), TypeError);
+  assert.throws(() => mintScript('n', [], undefined, 'm'), TypeError);
+  assert.throws(() => splitLines(null), TypeError);
+  assert.deepEqual(splitLines('a\n\r'), ['a\n', '\r']);
+  // CRLF and LF lines differ; mint never normalizes.
+  const before = [{ id: 'S', bytes: 'a\r\n' }];
+  assert.deepEqual(mintScript('n', before, 'a\n', 'm').off, ['S']);
+});
+
+test('M1-25 adjacent replacements by two authors (X -> X2, Y -> Y2) are not a snag (spec 4.2 "not snags": separate slots)', () => {
+  const repo = seedRepo('X\nY\n');
+  forkStream(repo, 'dev', 'B');
+  const a = mintIn(repo, 'dev', 'A', '2', 'X\nY2\n');
+  assert.equal(a.lines[0].after, 'L:seed:0');
+  mintIn(repo, 'B', 'B', '3', 'X2\nY\n');
+  assert.equal(carry(repo, 'dev', 'B').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'X2\nY2\n');
+  assert.deepEqual(view.snags, []);
+});
+
+test('M1-26 same-move neighbour (spec 4.2 kind 3 bullet 3): replacing X does not snag X\'s original next line', () => {
+  const repo = seedRepo('X\nI\n');
+  handIn(repo, 'dev', { id: 'B', orderKey: '2', off: ['L:seed:0'], lines: [{ id: 'R', node: FILE, bytes: 'R\n', after: START, before: 'L:seed:1', replaces: 'L:seed:0' }] });
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'R\nI\n');
+  assert.deepEqual(view.snags, []);
+});
+
+test('M1-27 an intermediate replacer in the insert\'s saw does not mask the final one (D-M1-13)', () => {
+  const repo = seedRepo('X\n');
+  forkStream(repo, 'dev', 'A');
+  mintIn(repo, 'dev', 'B1', '2', 'R1\n');
+  handIn(repo, 'A', { id: 'A', orderKey: '3', saw: ['B1'], lines: [{ id: 'I', node: FILE, bytes: 'i\n', after: 'L:seed:0', before: END }] });
+  mintIn(repo, 'dev', 'B2', '4', 'R2\n');
+  assert.equal(carry(repo, 'dev', 'A').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'R2\ni\n');
+  assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot, snag.moves.slice().sort()]), [[3, 'L:seed:0', ['A', 'B2']]]);
+});
+
+test('M1-28 residual G-61 (pending Rich, also on main): delete vs modify of one line by two authors is not a snag; the modify wins', () => {
+  const repo = seedRepo('X\nY\n');
+  forkStream(repo, 'dev', 'B');
+  mintIn(repo, 'dev', 'A', '2', 'X2\nY\n');
+  mintIn(repo, 'B', 'B', '3', 'Y\n');
+  assert.equal(carry(repo, 'dev', 'B').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'X2\nY\n');
+  assert.deepEqual(view.snags, []);
+});
+
+test('M1-29 residual G-62 (pending Rich): saw is per move; a line hidden from the deleting author and re-exposed by a pull is not kind 5', () => {
+  const repo = seedRepo('X\nY\n');
+  forkStream(repo, 'dev', 'B');
+  handIn(repo, 'dev', { id: 'A', orderKey: '2', saw: ['seed'], lines: [
+    { id: 'I1', node: FILE, bytes: 'i1\n', after: START, before: 'L:seed:0' },
+    { id: 'I2', node: FILE, bytes: 'i2\n', after: 'L:seed:0', before: 'L:seed:1' },
+  ] });
+  mintIn(repo, 'dev', 'C', '3', 'i1\nX\nY\n');
+  assert.equal(carry(repo, 'B', 'A').ok, true);
+  assert.equal(carry(repo, 'B', 'C').ok, true);
+  const m = mintIn(repo, 'B', 'Bdel', '4', 'i1\nY\n');
+  assert.deepEqual(m.saw, ['A', 'seed']);
+  assert.equal(carry(repo, 'dev', 'Bdel').ok, true);
+  assert.equal(pull(repo, 'dev', 'C').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'i1\ni2\nY\n');
+  assert.deepEqual(view.snags, []);
 });
 
 const MINT_V1_VECTOR_HASH = 'sha256:cb1d7a82d0a9cfd559f382a479c64855743b0d0175e89be7ecd6a3df9ac4771c';

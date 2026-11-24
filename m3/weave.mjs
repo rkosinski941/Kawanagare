@@ -39,6 +39,13 @@ export function weaveFiles(idx, scripts, moveList, activeRes, redactions) {
   // through lines that are not visible and stop at the first visible one. Ordering and
   // tombstones use these owners; snag rules keep the direct `replacers` map.
   const visibleIds = new Set(visible.map((v) => v.id));
+  // A chain link counts only while its maker is on and live in this set (D-M1-15): a
+  // replacement of a line from a pulled or dormant move occupies that line's slot, but
+  // the walk does not climb past it to an older line.
+  const linkLive = (ref) => {
+    const up = idx.lines[ref];
+    return !!up && onSet.has(up.addedBy) && effectsCount(scripts, up.addedBy, activeRes);
+  };
   const slots = new Map();
   for (const line of visible) {
     let ref = line.replaces;
@@ -47,9 +54,8 @@ export function weaveFiles(idx, scripts, moveList, activeRes, redactions) {
       walked.add(ref);
       if (!slots.has(ref)) slots.set(ref, []);
       slots.get(ref).push(line);
-      if (visibleIds.has(ref)) break;
-      const up = idx.lines[ref];
-      ref = up ? up.replaces : null;
+      if (visibleIds.has(ref) || !linkLive(ref)) break;
+      ref = idx.lines[ref].replaces;
     }
   }
 
@@ -78,8 +84,8 @@ export function weaveFiles(idx, scripts, moveList, activeRes, redactions) {
       walked.add(ref);
       refs.push(ref);
       occupied.add(ref);
-      const up = idx.lines[ref];
-      ref = up ? up.replaces : null;
+      if (!linkLive(ref)) break;
+      ref = idx.lines[ref].replaces;
     }
     if (refs.length) tombWalk.set(line, refs);
   }
@@ -102,7 +108,7 @@ export function weaveFiles(idx, scripts, moveList, activeRes, redactions) {
   const byNode = new Map();
   for (const [node, lines] of byNodeIds) {
     const nodeTombs = tombstones.filter((t) => t.node === node);
-    const ordered = orderVisible(idx, scripts, lines, nodeTombs, slots);
+    const ordered = orderVisible(idx, scripts, lines, nodeTombs, slots, linkLive);
     const bytes = ordered.map((line) => shownBytes(line, redactions)).join('');
     byNode.set(node, { lines: ordered, bytes, lineIds: ordered.map((line) => line.id) });
   }
@@ -123,7 +129,7 @@ function shownBytes(line, redactions) {
   return line.bytes;
 }
 
-export function orderVisible(idx, scripts, visibleLines, tombstones, replacers) {
+export function orderVisible(idx, scripts, visibleLines, tombstones, replacers, linkLive = () => true) {
   const visibleById = new Map(visibleLines.map((line) => [line.id, line]));
   const tombById = new Map(tombstones.map((line) => [line.id, line]));
   const nodes = new Map();
@@ -167,6 +173,7 @@ export function orderVisible(idx, scripts, visibleLines, tombstones, replacers) 
     while (ref && idx.lines[ref] && !walked.has(ref)) {
       walked.add(ref);
       orig = idx.lines[ref];
+      if (!linkLive(ref)) break;
       ref = orig.replaces;
     }
     if (orig) return { after: orig.after, before: orig.before };
