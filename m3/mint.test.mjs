@@ -401,7 +401,7 @@ test('M1-10 fuzz, one move on a seed: view bytes equal the after bytes and there
   }
 });
 
-test('M1-11 fuzz, chains of four mints: view bytes always equal the last after bytes; any snag is kind 3 or 5 (G-53, G-54)', () => {
+test('M1-11 fuzz, chains of four mints: view bytes always equal the last after bytes; no snags with mint `saw` (D-M1-12)', () => {
   const next = rng(0x6d696e74);
   for (let row = 0; row < 150; row++) {
     const repo = seedRepo(randomText(next, 6));
@@ -415,30 +415,52 @@ test('M1-11 fuzz, chains of four mints: view bytes always equal the last after b
       assert.equal(res.ok, true, `row ${row} step ${step}: ${res.message}`);
       const out = inspect(repo, 'dev');
       assert.equal(fileOf(out).bytes, after, `row ${row} step ${step}`);
-      for (const snag of out.snags) assert.equal([3, 5].includes(snag.kind), true, `row ${row} step ${step} kind ${snag.kind}`);
+      assert.deepEqual(out.snags, [], `row ${row} step ${step}`);
     }
   }
 });
 
-test('M1-12 residual G-53 (pending Rich): a sequential minted modify of the `after` anchor of an earlier move\'s line raises kind 3', () => {
+test('M1-12 saw exemption (D-M1-12, G-53): a sequential minted modify of an earlier move\'s `after` anchor is not kind 3', () => {
   const repo = seedRepo('a\nb\nc\n');
   mintIn(repo, 'dev', 'insE', '2', 'a\nb\ne\nc\n');
   const m = mintIn(repo, 'dev', 'modB', '3', 'a\nB\ne\nc\n');
   assert.deepEqual(m.saw, ['insE', 'seed']);
   const view = inspect(repo, 'dev');
   assert.equal(fileOf(view).bytes, 'a\nB\ne\nc\n');
-  assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot, snag.lines]), [[3, 'L:seed:1', ['L:insE:0']]]);
-  assert.equal(view.exportable, false);
+  assert.deepEqual(view.snags, []);
+  assert.equal(view.exportable, true);
 });
 
-test('M1-13 residual G-54 (pending Rich): a sequential minted delete of a line that a later move\'s line anchors on raises kind 5', () => {
+test('M1-13 saw exemption (D-M1-12, G-54): a sequential minted delete of a line a later move anchors on is not kind 5', () => {
   const repo = seedRepo('a\nb\nc\n');
   mintIn(repo, 'dev', 'insE', '2', 'a\nb\ne\nc\n');
   mintIn(repo, 'dev', 'insF', '3', 'a\nb\ne\nf\nc\n');
   mintIn(repo, 'dev', 'delE', '4', 'a\nb\nf\nc\n');
   const view = inspect(repo, 'dev');
   assert.equal(fileOf(view).bytes, 'a\nb\nf\nc\n');
-  assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot, snag.lines]), [[5, 'L:insE:0', ['L:insF:0']]]);
+  assert.deepEqual(view.snags, []);
+  assert.equal(view.exportable, true);
+});
+
+test('M1-13b concurrent edits still snag: without the other move in `saw`, kind 3 and kind 5 fire', () => {
+  const repo = seedRepo('a\nb\nc\n');
+  forkStream(repo, 'dev', 'other');
+  mintIn(repo, 'dev', 'insE', '2', 'a\nb\ne\nc\n');
+  const view0 = inspect(repo, 'other');
+  const mod = mintScript(FILE, beforeFromView(repo, view0, FILE), 'a\nB\nc\n', 'modB');
+  assert.deepEqual(mod.saw, ['seed']);
+  assert.equal(checkin(repo, 'other', withIntent({ id: 'modB', orderKey: '3', saw: mod.saw, lines: mod.lines, off: mod.off }, { targets: [{ node: FILE }] })).ok, true);
+  assert.equal(carry(repo, 'dev', 'modB').ok, true);
+  let view = inspect(repo, 'dev');
+  assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot]), [[3, 'L:seed:1']]);
+
+  const repo2 = seedRepo('a\nb\nc\n');
+  forkStream(repo2, 'dev', 'other');
+  mintIn(repo2, 'dev', 'insE', '2', 'a\nb\ne\nc\n');
+  mintIn(repo2, 'other', 'delB', '3', 'a\nc\n');
+  assert.equal(carry(repo2, 'dev', 'delB').ok, true);
+  view = inspect(repo2, 'dev');
+  assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot, snag.lines]), [[5, 'L:seed:1', ['L:insE:0']]]);
   assert.equal(view.exportable, false);
 });
 

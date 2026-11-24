@@ -107,7 +107,7 @@ export function weaveFiles(idx, scripts, moveList, activeRes, redactions) {
     byNode.set(node, { lines: ordered, bytes, lineIds: ordered.map((line) => line.id) });
   }
 
-  const snags = lineSnags(idx, scripts, moveList, activeRes, visible, replacers);
+  const snags = lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots);
   return { byNode, snags };
 }
 
@@ -232,8 +232,9 @@ function cmpNode(scripts, nodes, a, b) {
   return cmpLine(scripts, nodes.get(a), nodes.get(b));
 }
 
-function lineSnags(idx, scripts, moveList, activeRes, visible, replacers) {
+function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots) {
   const onSet = new Set(moveList);
+  const visibleIds = new Set(visible.map((v) => v.id));
   const snags = [];
   const waitingMoves = moveList.filter((id) => {
     const sc = scripts[id];
@@ -321,7 +322,9 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers) {
     // move, not a later insert. Ordering slides it past the replacement.
     if (anchorLine && anchorLine.addedBy === line.addedBy) continue;
     const saw = new Set(scripts[line.addedBy]?.saw || []);
-    const unseen = reps.filter((rep) => rep.addedBy !== line.addedBy && !saw.has(rep.addedBy));
+    // Saw exemption (D-M1-12): a replacing move whose `saw` lists the inserting move made
+    // the replacement with the insert in view; that is a sequential edit, not kind 3.
+    const unseen = reps.filter((rep) => rep.addedBy !== line.addedBy && !saw.has(rep.addedBy) && !(scripts[rep.addedBy]?.saw || []).includes(line.addedBy));
     if (!unseen.length) continue;
     if (!kind3.has(line.after)) kind3.set(line.after, []);
     kind3.get(line.after).push(line);
@@ -382,10 +385,14 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers) {
         continue;
       }
       const targetVisible = visible.some((v) => v.id === anchor);
-      const replaced = replacers.has(anchor) && replacers.get(anchor).length > 0;
+      // Chain-aware (D-M1-12, G-56): a slot held by a visible replacement through a
+      // `replaces` chain (spec 2 rule 3) is replaced, not lost.
+      const replaced = (slots.get(anchor) || []).some((l) => visibleIds.has(l.id));
       if (!targetVisible && !replaced && !reportedLost.has(`${line.id}:${anchor}`)) {
         reportedLost.add(`${line.id}:${anchor}`);
         const offs = (idx.lineOffBy[anchor] || []).filter((moveId) => onSet.has(moveId) && effectsCount(scripts, moveId, activeRes));
+        // Saw exemption (D-M1-12): every switching-off move saw the anchored line's move.
+        if (offs.length && offs.every((moveId) => (scripts[moveId]?.saw || []).includes(line.addedBy))) continue;
         snags.push({
           kind: 5,
           code: 'anchor_lost',
