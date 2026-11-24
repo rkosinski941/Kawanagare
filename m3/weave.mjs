@@ -311,11 +311,14 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots)
     });
   }
 
+  // Kind 3 follows replacement chains (D-M1-13, G-56): the replacements of an `after`
+  // anchor are the visible owners of its slot, direct or through switched-off links.
+  const slotOwners = (id) => (slots.get(id) || []).filter((owner) => visibleIds.has(owner.id));
   const kind3 = new Map();
   for (const line of visible) {
     if (line.replaces) continue;
     if (!line.after || line.after === START) continue;
-    const reps = replacers.get(line.after) || [];
+    const reps = slotOwners(line.after);
     if (!reps.length) continue;
     const anchorLine = idx.lines[line.after];
     // The original successor minted with the anchor is the next line of that
@@ -330,7 +333,7 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots)
     kind3.get(line.after).push(line);
   }
   for (const [anchor, lines] of kind3) {
-    const reps = replacers.get(anchor) || [];
+    const reps = slotOwners(anchor);
     snags.push({
       kind: 3,
       code: 'insert_beside_replaced',

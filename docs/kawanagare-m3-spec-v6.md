@@ -264,6 +264,7 @@ Two bots inserting into different gaps of the same file do not snag. Two bots re
 - A line minted by the **same move** as the anchor (the original next line of that move) is not kind 3. Ordering slides it to follow the replacement.
 - If `saw` includes the replacing move, the author did see the replacement, and kind 3 does not fire.
 - If the replacing move's `saw` includes the inserting move, the replacement was made with the insert in view, and kind 3 does not fire.
+- Through a chain (§2 rule 3, D-M1-13): the replacements of the `after` anchor are the visible lines that hold its slot, directly or through switched-off replacements. The `saw` checks above apply to those lines.
 
 **Kind 4 is the missing need.** The maker move of a required anchor or switch-off is not in play. That is what a carry refuses (§4.9). A pull or restore that exposes it lands, and the snag is tagged with that event (T26).
 

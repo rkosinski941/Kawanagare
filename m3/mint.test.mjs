@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { carry, checkin, createRepo, exportStream, forkStream, inspect, pull, redact, restore } from './engine.mjs';
+import { carry, checkin, createRepo, exportStream, forkStream, inspect, movesOn, pull, redact, restore } from './engine.mjs';
 import { START, END } from './weave.mjs';
 import { withIntent } from './fixture.mjs';
 import { hashOf } from './canon.mjs';
@@ -520,6 +520,192 @@ test('M1-17 a chain of replacements is placed by the first line of the chain (D-
   const view = inspect(repo, 'dev');
   assert.equal(fileOf(view).bytes, 'P2\nQ\n');
   assert.deepEqual(view.snags, []);
+});
+
+// ---------------------------------------------------------------- D-M1-13: kind 3 through replacement chains
+
+/** Base "a\n" on dev, fork `other`; `steps` mints on dev; `insert` on other adds "x\n" after the base line. */
+function chainRepo(steps) {
+  const repo = seedRepo('a\n');
+  forkStream(repo, 'dev', 'other');
+  steps.forEach(([id, after], k) => mintIn(repo, 'dev', id, String(k + 2), after));
+  mintIn(repo, 'other', 'insert', '90', 'a\nx\n');
+  assert.equal(carry(repo, 'dev', 'insert').ok, true);
+  return repo;
+}
+
+test('M1-18 terra-mint repro (G-56): an unseen insert after a line replaced twice (r1, r2) is kind 3', () => {
+  const repo = chainRepo([['r1', 'A\n'], ['r2', 'AA\n']]);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'AA\nx\n');
+  assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot, snag.lines, snag.moves.slice().sort()]), [[3, 'L:seed:0', ['L:insert:0'], ['insert', 'r2']]]);
+  assert.equal(view.exportable, false);
+});
+
+test('M1-19 chain of three replacements: still kind 3 at the first line of the chain', () => {
+  const repo = chainRepo([['r1', 'A\n'], ['r2', 'AA\n'], ['r3', 'AAA\n']]);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'AAA\nx\n');
+  assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot]), [[3, 'L:seed:0']]);
+});
+
+test('M1-20 chain whose visible link saw the insert: no kind 3 (the visible owner decides, D-M1-13)', () => {
+  const repo = seedRepo('a\n');
+  forkStream(repo, 'dev', 'other');
+  mintIn(repo, 'dev', 'r1', '2', 'A\n');
+  mintIn(repo, 'other', 'insert', '3', 'a\nx\n');
+  assert.equal(carry(repo, 'dev', 'insert').ok, true);
+  assert.deepEqual(inspect(repo, 'dev').snags.map((snag) => snag.kind), [3]);
+  const m = mintIn(repo, 'dev', 'r2', '4', 'AA\nx\n');
+  assert.deepEqual(m.saw, ['insert', 'r1']);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'AA\nx\n');
+  assert.deepEqual(view.snags, []);
+});
+
+test('M1-21 chain whose last link is switched off with no replacement: kind 5, not kind 3', () => {
+  const repo = seedRepo('a\nb\n');
+  forkStream(repo, 'dev', 'other');
+  mintIn(repo, 'dev', 'r1', '2', 'A\nb\n');
+  mintIn(repo, 'dev', 'r2', '3', 'AA\nb\n');
+  mintIn(repo, 'dev', 'r3', '4', 'b\n');
+  mintIn(repo, 'other', 'insert', '90', 'a\nx\nb\n');
+  assert.equal(carry(repo, 'dev', 'insert').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'x\nb\n');
+  assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot, snag.lines]), [[5, 'L:seed:0', ['L:insert:0']]]);
+});
+
+test('M1-22 chain with the first link pulled: the dangling link is kind 4; no kind 3 from a line whose slot owner is gone', () => {
+  const repo = chainRepo([['r1', 'A\n'], ['r2', 'AA\n']]);
+  assert.equal(pull(repo, 'dev', 'r1').ok, true);
+  const view = inspect(repo, 'dev');
+  const kinds = view.snags.map((snag) => snag.kind).sort();
+  assert.equal(kinds.includes(4), true);
+  assert.equal(view.exportable, false);
+});
+
+// ---------------------------------------------------------------- two-author fuzz (D-M1-13)
+
+/** Snags the spec rules (2 rules 3-6, 4.2 kinds 1, 2, 3, 5, with D-K5-01 and D-M1-12/13) predict, computed from records only. */
+function predictedSnags(repo, stream) {
+  const on = movesOn(repo, stream);
+  const onSet = new Set(on);
+  const lines = new Map();
+  const offBy = new Map();
+  for (const id of on) {
+    const sc = repo.scripts[id];
+    for (const line of sc.lines) lines.set(line.id, { ...line, addedBy: id });
+    for (const off of sc.off) {
+      if (!offBy.has(off)) offBy.set(off, []);
+      offBy.get(off).push(id);
+    }
+  }
+  const sawOf = (m) => repo.scripts[m].saw || [];
+  const seen = (a, b) => a === b || sawOf(a).includes(b) || sawOf(b).includes(a);
+  const isVisible = (id) => lines.has(id) && !(offBy.get(id) || []).length;
+  const visible = [...lines.values()].filter((line) => isVisible(line.id));
+  const owners = (target) => visible.filter((v) => {
+    let ref = v.replaces;
+    const walked = new Set();
+    while (ref && !walked.has(ref)) {
+      if (ref === target) return true;
+      if (isVisible(ref)) return false;
+      walked.add(ref);
+      ref = lines.get(ref)?.replaces;
+    }
+    return false;
+  });
+  const out = new Set();
+  const group = (keyOf, kind) => {
+    const groups = new Map();
+    for (const line of visible) {
+      const key = keyOf(line);
+      if (key == null) continue;
+      if (!groups.has(key)) groups.set(key, new Set());
+      groups.get(key).add(line.addedBy);
+    }
+    for (const [key, moves] of groups) if (moves.size > 1) out.add(`${kind}|${key}`);
+  };
+  group((line) => line.replaces || null, 1);
+  group((line) => (line.replaces ? null : `${line.after}|${line.before}`), 2);
+  for (const x of visible) {
+    if (!x.replaces && x.after !== START) {
+      const own = owners(x.after);
+      if (own.length && lines.get(x.after).addedBy !== x.addedBy && own.some((o) => !seen(o.addedBy, x.addedBy))) out.add(`3|${x.after}`);
+    }
+    for (const anchor of [x.after, x.before]) {
+      if (anchor === START || anchor === END) continue;
+      const target = lines.get(anchor);
+      if (target.addedBy === x.addedBy || isVisible(anchor) || owners(anchor).length) continue;
+      const offs = (offBy.get(anchor) || []).filter((m) => onSet.has(m));
+      if (offs.every((m) => sawOf(m).includes(x.addedBy))) continue;
+      out.add(`5|${anchor}`);
+    }
+  }
+  return [...out].sort();
+}
+
+function snagKeys(view) {
+  return [...new Set(view.snags.map((snag) => `${snag.kind}|${snag.spot}`))].sort();
+}
+
+test('M1-23 two-author fuzz (400 seeded rows): snags equal the rule prediction; every snag spans both authors; an unseen insert next to a line the other side replaced or deleted always snags; views equal in both arrival orders', () => {
+  const next = rng(0x7477_6f61);
+  const stats = { rows: 0, snagRows: 0, kinds: {} };
+  for (let row = 0; row < 400; row++) {
+    const repo = seedRepo(randomText(next, 6));
+    forkStream(repo, 'dev', 'A');
+    forkStream(repo, 'dev', 'B');
+    const made = { A: [], B: [] };
+    for (const side of ['A', 'B']) {
+      const steps = 1 + Math.floor(next() * 2);
+      for (let step = 0; step < steps; step++) {
+        const id = `${side}${step}`;
+        const view = inspect(repo, side);
+        const m = mintScript(FILE, beforeFromView(repo, view, FILE), randomText(next, 7), id);
+        if (!m.lines.length && !m.off.length) continue;
+        const res = checkin(repo, side, withIntent({ id, orderKey: String(10 * (side === 'A' ? 1 : 2) + step), saw: m.saw, lines: m.lines, off: m.off }, { targets: [{ node: FILE }] }));
+        assert.equal(res.ok, true, `row ${row} ${id}: ${res.message}`);
+        made[side].push(id);
+      }
+    }
+    for (const id of made.B) assert.equal(carry(repo, 'A', id).ok, true, `row ${row} carry ${id} into A`);
+    for (const id of made.A) assert.equal(carry(repo, 'B', id).ok, true, `row ${row} carry ${id} into B`);
+    const va = inspect(repo, 'A');
+    const vb = inspect(repo, 'B');
+    assert.deepEqual(fileOf(vb).lineIds, fileOf(va).lineIds, `row ${row} order`);
+    assert.equal(fileOf(vb).bytes, fileOf(va).bytes, `row ${row} bytes`);
+    assert.deepEqual(snagKeys(vb), snagKeys(va), `row ${row} snags by arrival order`);
+    const got = snagKeys(va);
+    assert.deepEqual(got, predictedSnags(repo, 'A'), `row ${row} prediction`);
+    for (const snag of va.snags) {
+      assert.equal([1, 2, 3, 5].includes(snag.kind), true, `row ${row} kind ${snag.kind}`);
+      const sides = new Set(snag.moves.map((m) => (m.startsWith('A') ? 'A' : m.startsWith('B') ? 'B' : 'seed')));
+      assert.equal(sides.has('A') && sides.has('B'), true, `row ${row} snag ${snag.kind} ${snag.spot} not cross-author: ${snag.moves}`);
+    }
+    // Semantic floor: a B insert whose `after` is a seed line that A switched off must snag (3 or 5) at that line, and vice versa.
+    const offIn = (ids) => new Set(ids.flatMap((id) => repo.scripts[id].off));
+    for (const [mine, theirs] of [[made.B, made.A], [made.A, made.B]]) {
+      const theirOff = offIn(theirs);
+      const myOff = offIn(mine);
+      for (const id of mine) {
+        for (const line of repo.scripts[id].lines) {
+          if (line.replaces || !line.after.startsWith('L:seed:') || !fileOf(va).lineIds.includes(line.id)) continue;
+          if (theirOff.has(line.after) && !myOff.has(line.after)) {
+            assert.equal(got.includes(`3|${line.after}`) || got.includes(`5|${line.after}`), true, `row ${row}: ${line.id} after ${line.after} switched off by the other side, no snag`);
+          }
+        }
+      }
+    }
+    stats.rows += 1;
+    if (got.length) stats.snagRows += 1;
+    for (const key of got) stats.kinds[key[0]] = (stats.kinds[key[0]] || 0) + 1;
+  }
+  assert.equal(stats.rows, 400);
+  assert.ok(stats.snagRows > 50, `fuzz too tame: ${JSON.stringify(stats)}`);
+  for (const kind of ['1', '2', '3', '5']) assert.ok(stats.kinds[kind] > 0, `kind ${kind} never exercised: ${JSON.stringify(stats)}`);
+  if (process.env.KAWA_FUZZ_STATS) console.log(JSON.stringify(stats));
 });
 
 const MINT_V1_VECTOR_HASH = 'sha256:cb1d7a82d0a9cfd559f382a479c64855743b0d0175e89be7ecd6a3df9ac4771c';
