@@ -321,6 +321,26 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots)
   // Kind 3 follows replacement chains (D-M1-13, G-56): the replacements of an `after`
   // anchor are the visible owners of its slot, direct or through switched-off links.
   const slotOwners = (id) => (slots.get(id) || []).filter((owner) => visibleIds.has(owner.id));
+  const liveOff = (lineId) => (idx.lineOffBy[lineId] || []).filter((moveId) => onSet.has(moveId) && effectsCount(scripts, moveId, activeRes));
+  const replacedBy = new Map();
+  for (const line of Object.values(idx.lines)) {
+    if (!line.replaces || !onSet.has(line.addedBy) || !effectsCount(scripts, line.addedBy, activeRes)) continue;
+    if (!replacedBy.has(line.replaces)) replacedBy.set(line.replaces, []);
+    replacedBy.get(line.replaces).push(line.id);
+  }
+  const slotEmptiers = (anchor) => {
+    const moves = [];
+    const walked = new Set();
+    const todo = [anchor];
+    while (todo.length) {
+      const id = todo.shift();
+      if (walked.has(id)) continue;
+      walked.add(id);
+      for (const moveId of liveOff(id)) if (!moves.includes(moveId)) moves.push(moveId);
+      for (const next of replacedBy.get(id) || []) todo.push(next);
+    }
+    return moves;
+  };
   const kind3 = new Map();
   for (const line of visible) {
     if (line.replaces) continue;
@@ -400,7 +420,10 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots)
       const replaced = (slots.get(anchor) || []).some((l) => visibleIds.has(l.id));
       if (!targetVisible && !replaced && !reportedLost.has(`${line.id}:${anchor}`)) {
         reportedLost.add(`${line.id}:${anchor}`);
-        const offs = (idx.lineOffBy[anchor] || []).filter((moveId) => onSet.has(moveId) && effectsCount(scripts, moveId, activeRes));
+        // The moves that emptied the slot (D-M1-16): those that switch the anchor off, plus
+        // those that switch off any live replacement of it, up the chain. The saw exemption
+        // (D-M1-12) needs every one of them to have seen the anchored line's move.
+        const offs = slotEmptiers(anchor);
         // Saw exemption (D-M1-12): every switching-off move saw the anchored line's move.
         if (offs.length && offs.every((moveId) => (scripts[moveId]?.saw || []).includes(line.addedBy))) continue;
         snags.push({

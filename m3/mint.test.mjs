@@ -640,8 +640,17 @@ function predictedSnags(repo, stream) {
       if (anchor === START || anchor === END) continue;
       const target = lines.get(anchor);
       if (target.addedBy === x.addedBy || isVisible(anchor) || owners(anchor).length) continue;
-      const offs = (offBy.get(anchor) || []).filter((m) => onSet.has(m));
-      if (offs.every((m) => sawOf(m).includes(x.addedBy))) continue;
+      const offs = new Set();
+      const todo = [anchor];
+      const walked = new Set();
+      while (todo.length) {
+        const id = todo.shift();
+        if (walked.has(id)) continue;
+        walked.add(id);
+        for (const m of offBy.get(id) || []) if (onSet.has(m)) offs.add(m);
+        for (const l of lines.values()) if (l.replaces === id) todo.push(l.id);
+      }
+      if ([...offs].every((m) => sawOf(m).includes(x.addedBy))) continue;
       out.add(`5|${anchor}`);
     }
   }
@@ -790,6 +799,30 @@ test('M1-29 residual G-62 (pending Rich): saw is per move; a line hidden from th
   const view = inspect(repo, 'dev');
   assert.equal(fileOf(view).bytes, 'i1\ni2\nY\n');
   assert.deepEqual(view.snags, []);
+});
+
+test('M1-30 kind 5 counts the move that emptied the slot (D-M1-16): B1 saw the insert and replaced X; B2 did not and deleted R', () => {
+  const repo = seedRepo('P\nX\n');
+  forkStream(repo, 'dev', 'B');
+  mintIn(repo, 'dev', 'A', '2', 'P\ni\nX\n');
+  assert.equal(carry(repo, 'B', 'A').ok, true);
+  const b1 = mintIn(repo, 'B', 'B1', '3', 'P\ni\nR\n');
+  assert.deepEqual(b1.saw, ['A', 'seed']);
+  forkStream(repo, 'B', 'B2s');
+  assert.equal(pull(repo, 'B2s', 'A').ok, true);
+  const b2 = mintIn(repo, 'B2s', 'B2', '4', 'P\n');
+  assert.deepEqual(b2.saw, ['B1', 'seed']);
+  assert.equal(carry(repo, 'dev', 'B1').ok, true);
+  assert.equal(carry(repo, 'dev', 'B2').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'P\ni\n');
+  assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot, snag.lines, snag.moves.slice().sort()]), [[5, 'L:seed:1', ['L:A:0'], ['A', 'B1', 'B2']]]);
+  // Control: when B2 also saw A, the chain delete was made with the insert in view.
+  const ok = seedRepo('P\nX\n');
+  mintIn(ok, 'dev', 'A', '2', 'P\ni\nX\n');
+  mintIn(ok, 'dev', 'B1', '3', 'P\ni\nR\n');
+  mintIn(ok, 'dev', 'B2', '4', 'P\ni\n');
+  assert.deepEqual(inspect(ok, 'dev').snags, []);
 });
 
 const MINT_V1_VECTOR_HASH = 'sha256:cb1d7a82d0a9cfd559f382a479c64855743b0d0175e89be7ecd6a3df9ac4771c';
