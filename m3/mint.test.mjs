@@ -826,3 +826,232 @@ test('M1-30 kind 5 counts the move that emptied the slot (D-M1-16): B1 saw the i
 });
 
 const MINT_V1_VECTOR_HASH = 'sha256:cb1d7a82d0a9cfd559f382a479c64855743b0d0175e89be7ecd6a3df9ac4771c';
+
+// ---------------------------------------------------------------- Opus review of PR #16 (Q2d test gaps)
+
+function snagRows(view) {
+  return view.snags.map((snag) => [snag.kind, snag.spot, snag.lines, snag.moves.slice().sort()]);
+}
+
+test('M1-31 kind 1 through a chain: B and C both replace R1, so both hold X\'s slot (Q2d gap 1)', () => {
+  // A replaces X → R1. B replaces R1 → R2. C, forked before B, replaces R1 → R3.
+  // R1 is off. R2 and R3 are the two visible owners of X's slot. That is kind 1.
+  const repo = seedRepo('P\nX\n');
+  mintIn(repo, 'dev', 'A', '2', 'P\nR1\n');
+  forkStream(repo, 'dev', 'C');
+  const b = mintIn(repo, 'dev', 'B', '3', 'P\nR2\n');
+  const c = mintIn(repo, 'C', 'C', '4', 'P\nR3\n');
+  assert.equal(b.lines[0].replaces, 'L:A:0');
+  assert.equal(c.lines[0].replaces, 'L:A:0');
+  assert.equal(b.saw.includes('C'), false);
+  assert.equal(c.saw.includes('B'), false);
+  assert.equal(carry(repo, 'dev', 'C').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'P\nR2\nR3\n');
+  assert.deepEqual(fileOf(view).lineIds, ['L:seed:0', 'L:B:0', 'L:C:0']);
+  assert.equal(fileOf(view).lineIds.includes('L:A:0'), false);
+  assert.equal(fileOf(view).lineIds.includes('L:seed:1'), false);
+  assert.deepEqual(snagRows(view), [[1, 'L:A:0', ['L:B:0', 'L:C:0'], ['B', 'C']]]);
+});
+
+test('M1-32 a pulled middle link ends the chain: C uses B\'s anchors, not A\'s (D-M1-15, Q2d gap 2)', () => {
+  // Seed L X R. A replaces X in place (between L and R).
+  // B replaces A's line but stores anchors after R. C replaces B's line and stores anchors before L.
+  // While B is on, the walk reaches X, so C sits between L and R.
+  // After B is pulled, the walk stops at B and C sits after R. A's line is visible again. Kind 4 on B's line.
+  const repo = seedRepo('L\nX\nR\n');
+  mintIn(repo, 'dev', 'A', '2', 'L\nA\nR\n');
+  handIn(repo, 'dev', {
+    id: 'B', orderKey: '3', saw: ['A', 'seed'], off: ['L:A:0'],
+    lines: [{ id: 'Lb', node: FILE, bytes: 'B\n', after: 'L:seed:2', before: END, replaces: 'L:A:0' }],
+  });
+  handIn(repo, 'dev', {
+    id: 'C', orderKey: '4', saw: ['A', 'B', 'seed'], off: ['Lb'],
+    lines: [{ id: 'Lc', node: FILE, bytes: 'C\n', after: START, before: 'L:seed:0', replaces: 'Lb' }],
+  });
+  const live = inspect(repo, 'dev');
+  assert.equal(fileOf(live).bytes, 'L\nC\nR\n');
+  assert.deepEqual(fileOf(live).lineIds, ['L:seed:0', 'Lc', 'L:seed:2']);
+  assert.deepEqual(live.snags, []);
+  assert.equal(pull(repo, 'dev', 'B').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'L\nA\nR\nC\n');
+  assert.deepEqual(fileOf(view).lineIds, ['L:seed:0', 'L:A:0', 'L:seed:2', 'Lc']);
+  assert.deepEqual(snagRows(view), [[4, 'Lb', ['Lc'], ['B', 'C']]]);
+});
+
+test('M1-33 a pulled mid-chain maker puts the tombstone at that link\'s anchors, not the original line (Q2d gap 3)', () => {
+  // P Q X S. A replaces X (between Q and S). B replaces A's line but stores anchors between P and Q.
+  // C replaces B. Del switches C off with no successor: C is the tombstone.
+  // While B is on, the tombstone holds X's slot and the view is P Q S.
+  // After B is pulled, the tomb walk stops at B. A's line returns in X's slot.
+  // An insert anchored on the tombstone, before Q, lands between P and Q — B's gap, not X's.
+  const repo = seedRepo('P\nQ\nX\nS\n');
+  mintIn(repo, 'dev', 'A', '2', 'P\nQ\nA\nS\n');
+  handIn(repo, 'dev', {
+    id: 'B', orderKey: '3', saw: ['A', 'seed'], off: ['L:A:0'],
+    lines: [{ id: 'Rb', node: FILE, bytes: 'B\n', after: 'L:seed:0', before: 'L:seed:1', replaces: 'L:A:0' }],
+  });
+  handIn(repo, 'dev', {
+    id: 'C', orderKey: '4', saw: ['A', 'B', 'seed'], off: ['Rb'],
+    lines: [{ id: 'Rc', node: FILE, bytes: 'C\n', after: START, before: END, replaces: 'Rb' }],
+  });
+  handIn(repo, 'dev', { id: 'Del', orderKey: '5', saw: ['A', 'B', 'C', 'seed'], off: ['Rc'] });
+  const held = inspect(repo, 'dev');
+  assert.equal(fileOf(held).bytes, 'P\nQ\nS\n');
+  assert.deepEqual(fileOf(held).lineIds, ['L:seed:0', 'L:seed:1', 'L:seed:3']);
+  assert.deepEqual(held.snags, []);
+  assert.equal(pull(repo, 'dev', 'B').ok, true);
+  handIn(repo, 'dev', {
+    id: 'M', orderKey: '6', saw: ['A', 'C', 'Del', 'seed'],
+    lines: [{ id: 'Im', node: FILE, bytes: 'M\n', after: 'Rc', before: 'L:seed:1' }],
+  });
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'P\nM\nQ\nA\nS\n');
+  assert.deepEqual(fileOf(view).lineIds, ['L:seed:0', 'Im', 'L:seed:1', 'L:A:0', 'L:seed:3']);
+  assert.deepEqual(snagRows(view), [
+    [5, 'Rc', ['Im'], ['Del', 'M']],
+    [4, 'Rb', ['Rb'], ['B', 'C']],
+  ]);
+});
+
+test('M1-34 kind 5 saw exemption checks every emptier of a three-link chain (D-M1-16, Q2d gap 4)', () => {
+  // X → R1 (B1) → R2 (B2) → deleted (B3). A inserted before X.
+  // The exemption needs B1, B2, and B3 all to list A. One miss is kind 5.
+  const deep = seedRepo('P\nX\n');
+  forkStream(deep, 'dev', 'B');
+  mintIn(deep, 'dev', 'A', '2', 'P\ni\nX\n');
+  assert.equal(carry(deep, 'B', 'A').ok, true);
+  const b1 = mintIn(deep, 'B', 'B1', '3', 'P\ni\nR1\n');
+  const b2 = mintIn(deep, 'B', 'B2', '4', 'P\ni\nR2\n');
+  assert.deepEqual(b1.saw, ['A', 'seed']);
+  assert.deepEqual(b2.saw, ['A', 'B1', 'seed']);
+  forkStream(deep, 'B', 'B3s');
+  assert.equal(pull(deep, 'B3s', 'A').ok, true);
+  const b3 = mintIn(deep, 'B3s', 'B3', '5', 'P\n');
+  assert.equal(b3.saw.includes('A'), false);
+  assert.equal(carry(deep, 'dev', 'B1').ok, true);
+  assert.equal(carry(deep, 'dev', 'B2').ok, true);
+  assert.equal(carry(deep, 'dev', 'B3').ok, true);
+  const deepView = inspect(deep, 'dev');
+  assert.equal(fileOf(deepView).bytes, 'P\ni\n');
+  assert.deepEqual(snagRows(deepView), [[5, 'L:seed:1', ['L:A:0'], ['A', 'B1', 'B2', 'B3']]]);
+
+  // The middle emptier missed A; the last one saw A. Still kind 5.
+  const mid = seedRepo('P\nX\n');
+  forkStream(mid, 'dev', 'Bs');
+  mintIn(mid, 'dev', 'A', '2', 'P\ni\nX\n');
+  assert.equal(carry(mid, 'Bs', 'A').ok, true);
+  mintIn(mid, 'Bs', 'B1', '3', 'P\ni\nR1\n');
+  forkStream(mid, 'Bs', 'B2s');
+  assert.equal(pull(mid, 'B2s', 'A').ok, true);
+  const mb2 = mintIn(mid, 'B2s', 'B2', '4', 'P\nR2\n');
+  assert.equal(mb2.saw.includes('A'), false);
+  assert.equal(carry(mid, 'dev', 'B1').ok, true);
+  assert.equal(carry(mid, 'dev', 'B2').ok, true);
+  const mb3 = mintIn(mid, 'dev', 'B3', '5', 'P\ni\n');
+  assert.equal(mb3.saw.includes('A'), true);
+  const midView = inspect(mid, 'dev');
+  assert.equal(fileOf(midView).bytes, 'P\ni\n');
+  assert.deepEqual(snagRows(midView), [[5, 'L:seed:1', ['L:A:0'], ['A', 'B1', 'B2', 'B3']]]);
+
+  // Control: every emptier saw A.
+  const ok = seedRepo('P\nX\n');
+  mintIn(ok, 'dev', 'A', '2', 'P\ni\nX\n');
+  mintIn(ok, 'dev', 'B1', '3', 'P\ni\nR1\n');
+  mintIn(ok, 'dev', 'B2', '4', 'P\ni\nR2\n');
+  mintIn(ok, 'dev', 'B3', '5', 'P\ni\n');
+  assert.equal(text(ok), 'P\ni\n');
+  assert.deepEqual(inspect(ok, 'dev').snags, []);
+});
+
+test('M1-35 beforeFromView of a truly empty file returns []; a whole-content file still throws (Q2d gap 5)', () => {
+  const repo = seedRepo('a\n');
+  mintIn(repo, 'dev', 'wipe', '2', '');
+  const view = inspect(repo, 'dev');
+  const file = fileOf(view);
+  assert.equal(file.bytes, '');
+  assert.deepEqual(file.lineIds, []);
+  assert.deepEqual(beforeFromView(repo, view, FILE), []);
+
+  const bin = createRepo();
+  assert.equal(checkin(bin, 'dev', withIntent({
+    id: 'seed',
+    orderKey: '1',
+    nodes: [{ id: 'root', kind: 'pool', root: true }, { id: 'bin', kind: 'file' }],
+    entries: [{ id: 'Eb', pool: 'root', node: 'bin', name: 'blob.bin' }],
+    attributes: [{ id: 'seed:content', node: 'bin', key: 'content', value: 'abc' }],
+  })).ok, true);
+  const whole = inspect(bin, 'dev').files[0];
+  assert.equal(whole.bytes, 'abc');
+  assert.deepEqual(whole.lineIds, []);
+  assert.throws(() => beforeFromView(bin, inspect(bin, 'dev'), 'bin'), /whole-content file/);
+});
+
+// Exposes bug at f9f581f. Run unskipped, the assertion below failed verbatim:
+// AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+// + actual - expected
+//
+// + []
+// - [
+// -   [
+// -     1,
+// -     'L:seed:0',
+// -     [
+// -       'L:A:0'
+// -     ],
+// -     [
+// -       'A',
+// -       'B'
+// -     ]
+// -   ]
+// - ]
+// The lines above it passed: bytes were 'X2\nY\n' (the modify stays visible) and B's saw does not include A.
+test('M1-36 G-61: an unseen delete and modify of one line is kind 1; the replacement stays visible (Q2d gap 6)', { skip: 'Exposes bug at f9f581f: snagRows(view) was [] instead of [[1, L:seed:0, [L:A:0], [A, B]]]' }, () => {
+  const repo = seedRepo('X\nY\n');
+  forkStream(repo, 'dev', 'B');
+  mintIn(repo, 'dev', 'A', '2', 'X2\nY\n');
+  const deleted = mintIn(repo, 'B', 'B', '3', 'Y\n');
+  assert.deepEqual(deleted.off, ['L:seed:0']);
+  assert.deepEqual(deleted.lines, []);
+  assert.equal(deleted.saw.includes('A'), false);
+  assert.equal(carry(repo, 'dev', 'B').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'X2\nY\n');
+  assert.deepEqual(snagRows(view), [[1, 'L:seed:0', ['L:A:0'], ['A', 'B']]]);
+});
+
+test('M1-36 control: a delete that saw the modify removes the replacement and is not a snag (Q2d gap 6)', () => {
+  const ok = seedRepo('X\nY\n');
+  mintIn(ok, 'dev', 'A', '2', 'X2\nY\n');
+  const b = mintIn(ok, 'dev', 'B', '3', 'Y\n');
+  assert.deepEqual(b.saw, ['A', 'seed']);
+  assert.deepEqual(b.off, ['L:A:0']);
+  assert.equal(text(ok), 'Y\n');
+  assert.deepEqual(inspect(ok, 'dev').snags, []);
+});
+
+test('M1-37 two inserts after one chain-replaced anchor: the seen one is exempt, the unseen one is kind 3 (Q2d gap 7)', () => {
+  // B1 replaces X → R1, B2 replaces R1 → R2. S was in the view when B2 minted, so B2 saw S.
+  // U also anchors after X, and neither saw the other. Kind 3 lists U only.
+  const repo = seedRepo('X\nY\nZ\n');
+  forkStream(repo, 'dev', 'seen');
+  forkStream(repo, 'dev', 'unseen');
+  mintIn(repo, 'dev', 'B1', '2', 'R1\nY\nZ\n');
+  const s = mintIn(repo, 'seen', 'S', '3', 'X\nS\nY\nZ\n');
+  assert.equal(s.lines[0].after, 'L:seed:0');
+  assert.equal(carry(repo, 'dev', 'S').ok, true);
+  const b2 = mintIn(repo, 'dev', 'B2', '4', 'R2\nS\nY\nZ\n');
+  assert.equal(b2.lines[0].replaces, 'L:B1:0');
+  assert.equal(b2.saw.includes('S'), true);
+  assert.deepEqual(inspect(repo, 'dev').snags, []);
+  handIn(repo, 'unseen', {
+    id: 'U', orderKey: '5', saw: ['seed'],
+    lines: [{ id: 'Iu', node: FILE, bytes: 'U\n', after: 'L:seed:0', before: 'L:seed:2' }],
+  });
+  assert.equal(carry(repo, 'dev', 'U').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'R2\nS\nY\nU\nZ\n');
+  assert.equal(fileOf(view).lineIds.includes('L:S:0'), true);
+  assert.deepEqual(snagRows(view), [[3, 'L:seed:0', ['Iu'], ['B2', 'U']]]);
+});
