@@ -629,7 +629,29 @@ function predictedSnags(repo, stream) {
     }
     for (const [key, moves] of groups) if (moves.size > 1) out.add(`${kind}|${key}`);
   };
-  group((line) => line.replaces || null, 1);
+  // Kind 1 through chains (D-M1-18): owners reaching one slot through different links.
+  const slotHits = new Map();
+  for (const v of visible) {
+    let ref = v.replaces;
+    let via = v.id;
+    const walked = new Set();
+    while (ref && !walked.has(ref)) {
+      walked.add(ref);
+      if (!slotHits.has(ref)) slotHits.set(ref, []);
+      slotHits.get(ref).push({ move: v.addedBy, via });
+      if (isVisible(ref)) break;
+      via = ref;
+      ref = lines.get(ref)?.replaces;
+    }
+  }
+  for (const [slot, hits] of slotHits) {
+    if (hits.some((a) => hits.some((b) => a.via !== b.via && a.move !== b.move))) out.add(`1|${slot}`);
+    // Delete vs modify (D-M1-17): a move that switches the slot's line off and has no line
+    // replacing it, against an owner's move, neither in the other's `saw`.
+    const replacing = new Set([...lines.values()].filter((l) => l.replaces === slot).map((l) => l.addedBy));
+    const deleters = (offBy.get(slot) || []).filter((m) => onSet.has(m) && !replacing.has(m));
+    if (deleters.some((d) => hits.some((h) => !seen(d, h.move)))) out.add(`1|${slot}`);
+  }
   group((line) => (line.replaces ? null : `${line.after}|${line.before}`), 2);
   for (const x of visible) {
     if (!x.replaces && x.after !== START) {
@@ -771,7 +793,7 @@ test('M1-27 an intermediate replacer in the insert\'s saw does not mask the fina
   assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot, snag.moves.slice().sort()]), [[3, 'L:seed:0', ['A', 'B2']]]);
 });
 
-test('M1-28 residual G-61 (pending Rich, also on main): delete vs modify of one line by two authors is not a snag; the modify wins', () => {
+test('M1-28 G-61 (D-M1-17): delete vs modify of one line by two authors who did not see each other is kind 1; the modify stays visible', () => {
   const repo = seedRepo('X\nY\n');
   forkStream(repo, 'dev', 'B');
   mintIn(repo, 'dev', 'A', '2', 'X2\nY\n');
@@ -779,7 +801,10 @@ test('M1-28 residual G-61 (pending Rich, also on main): delete vs modify of one 
   assert.equal(carry(repo, 'dev', 'B').ok, true);
   const view = inspect(repo, 'dev');
   assert.equal(fileOf(view).bytes, 'X2\nY\n');
-  assert.deepEqual(view.snags, []);
+  assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.code, snag.spot, snag.moves, snag.lines, snag.sides, snag.twin]), [
+    [1, 'same_slot', 'L:seed:0', ['A', 'B'], ['L:A:0'], [{ move: 'A', lines: ['L:A:0'], bytes: 'X2\n' }, { move: 'B', lines: [], bytes: '' }], false],
+  ]);
+  assert.equal(view.exportable, false);
 });
 
 test('M1-29 residual G-62 (pending Rich): saw is per move; a line hidden from the deleting author and re-exposed by a pull is not kind 5', () => {
@@ -823,6 +848,296 @@ test('M1-30 kind 5 counts the move that emptied the slot (D-M1-16): B1 saw the i
   mintIn(ok, 'dev', 'B1', '3', 'P\ni\nR\n');
   mintIn(ok, 'dev', 'B2', '4', 'P\ni\n');
   assert.deepEqual(inspect(ok, 'dev').snags, []);
+});
+
+// ---------------------------------------------------------------- kind 1 through replacement chains (D-M1-18; Opus review gap 1)
+
+const snagRows = (view) => view.snags.map((snag) => [snag.kind, snag.spot, snag.moves.slice().sort(), (snag.sides || []).map((side) => [side.move, side.bytes])]);
+
+test('M1-31 kind 1 through a chain (D-M1-18): A: X -> R1, B: R1 -> R2 on dev; C (saw seed only) X -> R3; one kind 1 at X, both arrival orders', () => {
+  const build = (order) => {
+    const repo = seedRepo('X\nY\n');
+    forkStream(repo, 'dev', 'C');
+    forkStream(repo, 'dev', 'AB');
+    mintIn(repo, 'AB', 'A', '2', 'R1\nY\n');
+    mintIn(repo, 'AB', 'B', '3', 'R2\nY\n');
+    const c = mintIn(repo, 'C', 'C', '4', 'R3\nY\n');
+    assert.equal(c.lines[0].replaces, 'L:seed:0');
+    for (const id of order) assert.equal(carry(repo, 'dev', id).ok, true);
+    return inspect(repo, 'dev');
+  };
+  const one = build(['A', 'B', 'C']);
+  const two = build(['C', 'A', 'B']);
+  assert.equal(fileOf(one).bytes, 'R2\nR3\nY\n');
+  assert.deepEqual(fileOf(two).lineIds, fileOf(one).lineIds);
+  assert.deepEqual(snagRows(one), [[1, 'L:seed:0', ['B', 'C'], [['B', 'R2\n'], ['C', 'R3\n']]]]);
+  assert.deepEqual(snagRows(two), snagRows(one));
+  assert.equal(one.exportable, false);
+});
+
+test('M1-32 kind 1 where two owners share a link is reported once, at the link they both replace (D-M1-18)', () => {
+  const repo = seedRepo('X\nY\n');
+  mintIn(repo, 'dev', 'A', '2', 'R1\nY\n');
+  forkStream(repo, 'dev', 'C');
+  mintIn(repo, 'dev', 'B', '3', 'R2\nY\n');
+  mintIn(repo, 'C', 'C', '4', 'R3\nY\n');
+  assert.equal(carry(repo, 'dev', 'C').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'R2\nR3\nY\n');
+  // Both replace L:A:0 directly; they also own X's slot through L:A:0, but meet at L:A:0 first.
+  assert.deepEqual(snagRows(view), [[1, 'L:A:0', ['B', 'C'], [['B', 'R2\n'], ['C', 'R3\n']]]]);
+});
+
+test('M1-33 kind 1 through a chain ends at a pulled link (D-M1-15): pull A and R2 no longer reaches X; only the dangling link (kind 4)', () => {
+  const repo = seedRepo('X\nY\n');
+  forkStream(repo, 'dev', 'C');
+  mintIn(repo, 'dev', 'A', '2', 'R1\nY\n');
+  mintIn(repo, 'dev', 'B', '3', 'R2\nY\n');
+  mintIn(repo, 'C', 'C', '4', 'R3\nY\n');
+  assert.equal(carry(repo, 'dev', 'C').ok, true);
+  assert.equal(pull(repo, 'dev', 'A').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot]), [[4, 'L:A:0']]);
+});
+
+// ---------------------------------------------------------------- G-61 delete vs modify (D-M1-17)
+
+test('M1-34 G-61 both arrival orders: same view, same single kind 1, whichever move lands first', () => {
+  const build = (order) => {
+    const repo = seedRepo('X\nY\n');
+    forkStream(repo, 'dev', 'A');
+    forkStream(repo, 'dev', 'B');
+    mintIn(repo, 'A', 'A', '2', 'X2\nY\n');
+    mintIn(repo, 'B', 'B', '3', 'Y\n');
+    for (const id of order) assert.equal(carry(repo, 'dev', id).ok, true);
+    return inspect(repo, 'dev');
+  };
+  const ab = build(['A', 'B']);
+  const ba = build(['B', 'A']);
+  assert.equal(fileOf(ab).bytes, 'X2\nY\n');
+  assert.deepEqual(fileOf(ba).lineIds, fileOf(ab).lineIds);
+  assert.deepEqual(snagRows(ab), [[1, 'L:seed:0', ['A', 'B'], [['A', 'X2\n'], ['B', '']]]]);
+  assert.deepEqual(snagRows(ba), snagRows(ab));
+});
+
+test('M1-35 G-61 saw exemption, deleter side: the switching-off move lists the replacing move in `saw`; no snag', () => {
+  const repo = seedRepo('X\nY\n');
+  handIn(repo, 'dev', { id: 'A', orderKey: '2', saw: ['seed'], off: ['L:seed:0'], lines: [{ id: 'X2', node: FILE, bytes: 'X2\n', after: START, before: 'L:seed:1', replaces: 'L:seed:0' }] });
+  handIn(repo, 'dev', { id: 'B', orderKey: '3', saw: ['A', 'seed'], off: ['L:seed:0'] });
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'X2\nY\n');
+  assert.deepEqual(view.snags, []);
+  // Control: the same switch-off without A in `saw` is kind 1.
+  const hit = seedRepo('X\nY\n');
+  handIn(hit, 'dev', { id: 'A', orderKey: '2', saw: ['seed'], off: ['L:seed:0'], lines: [{ id: 'X2', node: FILE, bytes: 'X2\n', after: START, before: 'L:seed:1', replaces: 'L:seed:0' }] });
+  handIn(hit, 'dev', { id: 'B', orderKey: '3', saw: ['seed'], off: ['L:seed:0'] });
+  assert.deepEqual(snagRows(inspect(hit, 'dev')), [[1, 'L:seed:0', ['A', 'B'], [['A', 'X2\n'], ['B', '']]]]);
+});
+
+test('M1-36 G-61 saw exemption, replacer side: a visible owner whose `saw` lists the deleter is exempt; a minted follow-on edit does not list a pure delete (G-63 pin)', () => {
+  // Hand-authored replacer whose `saw` lists the deleter: no snag.
+  const hand = seedRepo('X\nY\n');
+  handIn(hand, 'dev', { id: 'B', orderKey: '2', saw: ['seed'], off: ['L:seed:0'] });
+  handIn(hand, 'dev', { id: 'A', orderKey: '3', saw: ['B', 'seed'], off: ['L:seed:0'], lines: [{ id: 'X2', node: FILE, bytes: 'X2\n', after: START, before: 'L:seed:1', replaces: 'L:seed:0' }] });
+  assert.equal(fileOf(inspect(hand, 'dev')).bytes, 'X2\nY\n');
+  assert.deepEqual(inspect(hand, 'dev').snags, []);
+  // Through a chain: the visible owner A2 lists B in `saw` (hand-authored), A1 did not: the owner decides.
+  const chain = seedRepo('X\nY\n');
+  forkStream(chain, 'dev', 'B');
+  mintIn(chain, 'dev', 'A1', '2', 'X2\nY\n');
+  mintIn(chain, 'B', 'B', '3', 'Y\n');
+  assert.equal(carry(chain, 'dev', 'B').ok, true);
+  assert.deepEqual(inspect(chain, 'dev').snags.map((snag) => [snag.kind, snag.spot]), [[1, 'L:seed:0']]);
+  handIn(chain, 'dev', { id: 'A2', orderKey: '4', saw: ['A1', 'B', 'seed'], off: ['L:A1:0'], lines: [{ id: 'X3', node: FILE, bytes: 'X3\n', after: START, before: 'L:seed:1', replaces: 'L:A1:0' }] });
+  assert.equal(fileOf(inspect(chain, 'dev')).bytes, 'X3\nY\n');
+  assert.deepEqual(inspect(chain, 'dev').snags, []);
+  // G-63 pin: a minted follow-on edit lists the makers of visible lines only (D-M1-06). B made no
+  // visible line, so the minted A2 does not list B and the snag stays (flips if `saw` changes).
+  const minted = seedRepo('X\nY\n');
+  forkStream(minted, 'dev', 'B');
+  mintIn(minted, 'dev', 'A1', '2', 'X2\nY\n');
+  mintIn(minted, 'B', 'B', '3', 'Y\n');
+  assert.equal(carry(minted, 'dev', 'B').ok, true);
+  const a2 = mintIn(minted, 'dev', 'A2', '4', 'X3\nY\n');
+  assert.deepEqual(a2.saw, ['A1', 'seed']);
+  assert.deepEqual(snagRows(inspect(minted, 'dev')), [[1, 'L:seed:0', ['A2', 'B'], [['B', ''], ['A2', 'X3\n']]]]);
+});
+
+test('M1-37 G-61 through a chain: A1 X -> X2, A2 X2 -> X3; B (saw seed only) deletes X; kind 1 at X between the visible owner and B', () => {
+  const repo = seedRepo('X\nY\n');
+  forkStream(repo, 'dev', 'B');
+  mintIn(repo, 'dev', 'A1', '2', 'X2\nY\n');
+  mintIn(repo, 'dev', 'A2', '3', 'X3\nY\n');
+  mintIn(repo, 'B', 'B', '4', 'Y\n');
+  assert.equal(carry(repo, 'dev', 'B').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'X3\nY\n');
+  assert.deepEqual(snagRows(view), [[1, 'L:seed:0', ['A2', 'B'], [['A2', 'X3\n'], ['B', '']]]]);
+  // A mid-chain delete: B2 saw A1 and deletes X2 while A2' (did not see B2) replaces X2.
+  const mid = seedRepo('X\nY\n');
+  mintIn(mid, 'dev', 'A1', '2', 'X2\nY\n');
+  forkStream(mid, 'dev', 'B2s');
+  mintIn(mid, 'dev', 'A2', '3', 'X3\nY\n');
+  mintIn(mid, 'B2s', 'B2', '4', 'Y\n');
+  assert.equal(carry(mid, 'dev', 'B2').ok, true);
+  assert.deepEqual(snagRows(inspect(mid, 'dev')), [[1, 'L:A1:0', ['A2', 'B2'], [['A2', 'X3\n'], ['B2', '']]]]);
+});
+
+test('M1-38 G-61 honours D-M1-15: with the first link\'s maker pulled, the chain ends there; X is a plain deletion and only the dangling link (kind 4) remains', () => {
+  const repo = seedRepo('X\nY\n');
+  forkStream(repo, 'dev', 'B');
+  mintIn(repo, 'dev', 'A1', '2', 'X2\nY\n');
+  mintIn(repo, 'dev', 'A2', '3', 'X3\nY\n');
+  mintIn(repo, 'B', 'B', '4', 'Y\n');
+  assert.equal(carry(repo, 'dev', 'B').ok, true);
+  assert.equal(pull(repo, 'dev', 'A1').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot]), [[4, 'L:A1:0']]);
+});
+
+test('M1-39 G-61 with a second replacement: one kind 1 with three sides (two replacements, one switch-off)', () => {
+  const repo = seedRepo('X\nY\n');
+  forkStream(repo, 'dev', 'B');
+  forkStream(repo, 'dev', 'C');
+  mintIn(repo, 'dev', 'A', '2', 'XA\nY\n');
+  mintIn(repo, 'B', 'B', '3', 'Y\n');
+  mintIn(repo, 'C', 'C', '4', 'XC\nY\n');
+  assert.equal(carry(repo, 'dev', 'B').ok, true);
+  assert.equal(carry(repo, 'dev', 'C').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'XA\nXC\nY\n');
+  assert.deepEqual(snagRows(view), [[1, 'L:seed:0', ['A', 'B', 'C'], [['A', 'XA\n'], ['B', ''], ['C', 'XC\n']]]]);
+});
+
+test('M1-40 G-61 extra switch-off of a mint hunk: A turns X,Y into Z (Z replaces X, Y stands alone); B replaces Y; kind 1 at Y', () => {
+  const repo = seedRepo('X\nY\nW\n');
+  forkStream(repo, 'dev', 'B');
+  const a = mintIn(repo, 'dev', 'A', '2', 'Z\nW\n');
+  assert.deepEqual(a.off, ['L:seed:0', 'L:seed:1']);
+  assert.equal(a.lines[0].replaces, 'L:seed:0');
+  mintIn(repo, 'B', 'B', '3', 'X\nY2\nW\n');
+  assert.equal(carry(repo, 'dev', 'B').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'Z\nY2\nW\n');
+  assert.deepEqual(snagRows(view), [[1, 'L:seed:1', ['A', 'B'], [['A', ''], ['B', 'Y2\n']]]]);
+});
+
+test('M1-41 G-61 resolution: a resolution with inputs [A, B] that keeps the modify, or one that takes the delete, leaves no snag', () => {
+  const contested = () => {
+    const repo = seedRepo('X\nY\n');
+    forkStream(repo, 'dev', 'B');
+    mintIn(repo, 'dev', 'A', '2', 'X2\nY\n');
+    mintIn(repo, 'B', 'B', '3', 'Y\n');
+    assert.equal(carry(repo, 'dev', 'B').ok, true);
+    assert.deepEqual(inspect(repo, 'dev').snags.map((snag) => snag.kind), [1]);
+    return repo;
+  };
+  const resolves = (decision) => ({ kind: 'same_slot', inputs: ['A', 'B'], absent: [], contested: ['L:seed:0'], saw: ['L:A:0'], decision });
+  const keep = contested();
+  handIn(keep, 'dev', { id: 'R', orderKey: '4', resolves: resolves('keep the modify'), off: ['L:A:0'], lines: [{ id: 'RX', node: FILE, bytes: 'X2\n', after: START, before: 'L:seed:1', replaces: 'L:seed:0' }] });
+  const kept = inspect(keep, 'dev');
+  assert.equal(fileOf(kept).bytes, 'X2\nY\n');
+  assert.deepEqual(kept.snags, []);
+  const drop = contested();
+  handIn(drop, 'dev', { id: 'R', orderKey: '4', resolves: resolves('take the delete'), off: ['L:A:0'] });
+  const dropped = inspect(drop, 'dev');
+  assert.equal(fileOf(dropped).bytes, 'Y\n');
+  assert.deepEqual(dropped.snags, []);
+});
+
+// ---------------------------------------------------------------- Opus review test gaps (no behaviour change)
+
+test('M1-42 chain with its middle link pulled (D-M1-15): X -> R1 (A) -> R2 (B) -> R3 (C); pull B; R3 stops at R2 and takes R2\'s place; R1 comes back; only kind 4', () => {
+  const repo = seedRepo('P\nX\nQ\n');
+  mintIn(repo, 'dev', 'A', '2', 'P\nR1\nQ\n');
+  mintIn(repo, 'dev', 'B', '3', 'P\nR2\nQ\n');
+  mintIn(repo, 'dev', 'C', '4', 'P\nR3\nQ\n');
+  assert.equal(text(repo), 'P\nR3\nQ\n');
+  assert.equal(pull(repo, 'dev', 'B').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.deepEqual(fileOf(view).lineIds, ['L:seed:0', 'L:A:0', 'L:C:0', 'L:seed:2']);
+  // R3 does not climb past R2 to own R1's or X's slot: no kind 1 at L:A:0 or L:seed:1.
+  assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot, snag.moves.slice().sort()]), [[4, 'L:B:0', ['B', 'C']]]);
+});
+
+test('M1-43 tombstone through a chain with a pulled maker: R2 (B, replaces R1) is switched off by C; pull A; R2\'s tombstone stops at R1; X comes back; the insert after R2 keeps its place', () => {
+  const repo = seedRepo('P\nX\nQ\n');
+  mintIn(repo, 'dev', 'A', '2', 'P\nR1\nQ\n');
+  mintIn(repo, 'dev', 'B', '3', 'P\nR2\nQ\n');
+  const d = mintIn(repo, 'dev', 'D', '4', 'P\nR2\nI\nQ\n');
+  assert.equal(d.lines[0].after, 'L:B:0');
+  const c = mintIn(repo, 'dev', 'C', '5', 'P\nI\nQ\n');
+  assert.deepEqual(c.off, ['L:B:0']);
+  assert.equal(text(repo), 'P\nI\nQ\n');
+  assert.deepEqual(inspect(repo, 'dev').snags, []);
+  assert.equal(pull(repo, 'dev', 'A').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.deepEqual(fileOf(view).lineIds, ['L:seed:0', 'L:seed:1', 'L:D:0', 'L:seed:2']);
+  assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot, snag.moves.slice().sort()]), [[4, 'L:A:0', ['A', 'B']]]);
+});
+
+test('M1-44 kind 5 saw exemption over a three-link chain (D-M1-16): every emptier must have seen the insert', () => {
+  // A inserts i before X. B1, B2 (saw A) replace X -> R1 -> R2; B3 deletes R2.
+  const build = (b3SawA, b2SawA) => {
+    const repo = seedRepo('P\nX\n');
+    forkStream(repo, 'dev', 'B');
+    mintIn(repo, 'dev', 'A', '2', 'P\ni\nX\n');
+    assert.equal(carry(repo, 'B', 'A').ok, true);
+    mintIn(repo, 'B', 'B1', '3', 'P\ni\nR1\n');
+    if (b2SawA) {
+      mintIn(repo, 'B', 'B2', '4', 'P\ni\nR2\n');
+    } else {
+      forkStream(repo, 'B', 'B2s');
+      assert.equal(pull(repo, 'B2s', 'A').ok, true);
+      assert.deepEqual(mintIn(repo, 'B2s', 'B2', '4', 'P\nR2\n').saw, ['B1', 'seed']);
+      assert.equal(carry(repo, 'B', 'B2').ok, true);
+    }
+    if (b3SawA) {
+      mintIn(repo, 'B', 'B3', '5', 'P\ni\n');
+    } else {
+      forkStream(repo, 'B', 'B3s');
+      assert.equal(pull(repo, 'B3s', 'A').ok, true);
+      assert.equal(mintIn(repo, 'B3s', 'B3', '5', 'P\n').saw.includes('A'), false);
+    }
+    for (const id of ['B1', 'B2', 'B3']) assert.equal(carry(repo, 'dev', id).ok, true);
+    return inspect(repo, 'dev');
+  };
+  const rows = (view) => view.snags.map((snag) => [snag.kind, snag.spot, snag.moves.slice().sort()]);
+  assert.deepEqual(rows(build(true, true)), []);
+  assert.deepEqual(rows(build(false, true)), [[5, 'L:seed:1', ['A', 'B1', 'B2', 'B3']]]);
+  // The middle link did not see A, the last one did: still kind 5.
+  const mid = build(true, false);
+  assert.equal(fileOf(mid).bytes, 'P\ni\n');
+  assert.deepEqual(rows(mid), [[5, 'L:seed:1', ['A', 'B1', 'B2', 'B3']]]);
+});
+
+test('M1-45 beforeFromView on an empty file (no lines, bytes "") returns []; a mint from it is a plain START..END chain', () => {
+  const repo = seedRepo('');
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, '');
+  assert.deepEqual(fileOf(view).lineIds, []);
+  assert.deepEqual(beforeFromView(repo, view, FILE), []);
+  const m = mintIn(repo, 'dev', 'A', '2', 'a\n');
+  assert.deepEqual(m.off, []);
+  assert.deepEqual(m.lines.map((line) => [line.after, line.before, line.replaces || null]), [[START, END, null]]);
+  assert.equal(text(repo), 'a\n');
+});
+
+test('M1-46 two inserts from different moves after a chain-replaced anchor (D-M1-13): the one that saw the visible owner is clean; the other is kind 3', () => {
+  const repo = seedRepo('a\nb\n');
+  forkStream(repo, 'dev', 'blind');
+  mintIn(repo, 'dev', 'r1', '2', 'A\nb\n');
+  mintIn(repo, 'dev', 'r2', '3', 'AA\nb\n');
+  forkStream(repo, 'dev', 'seen');
+  const s = mintIn(repo, 'seen', 'insSeen', '4', 'AA\ns\nb\n');
+  assert.equal(s.lines[0].after, 'L:r2:0');
+  const u = mintIn(repo, 'blind', 'insBlind', '5', 'a\nu\nb\n');
+  assert.equal(u.lines[0].after, 'L:seed:0');
+  assert.equal(carry(repo, 'dev', 'insSeen').ok, true);
+  assert.equal(carry(repo, 'dev', 'insBlind').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes.startsWith('AA\n'), true);
+  assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot, snag.lines, snag.moves.slice().sort()]), [[3, 'L:seed:0', ['L:insBlind:0'], ['insBlind', 'r2']]]);
 });
 
 const MINT_V1_VECTOR_HASH = 'sha256:cb1d7a82d0a9cfd559f382a479c64855743b0d0175e89be7ecd6a3df9ac4771c';
