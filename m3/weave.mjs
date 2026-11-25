@@ -33,17 +33,71 @@ export function weaveFiles(idx, scripts, moveList, activeRes, redactions) {
   }
   for (const group of replacers.values()) group.sort((a, b) => cmpLine(scripts, a, b));
 
-  const tombstones = [];
+  // Slot owners for ordering (D-M1-08, G-55). A replacement occupies the slot of the
+  // line it replaces (spec 2 rule 3). When that line is itself a replacement that is no
+  // longer visible, the slot is the older line's slot too: walk the `replaces` chain up
+  // through lines that are not visible and stop at the first visible one. Ordering and
+  // tombstones use these owners; snag rules keep the direct `replacers` map.
+  const visibleIds = new Set(visible.map((v) => v.id));
+  // A chain link counts only while its maker is on and live in this set (D-M1-15): a
+  // replacement of a line from a pulled or dormant move occupies that line's slot, but
+  // the walk does not climb past it to an older line.
+  const linkLive = (ref) => {
+    const up = idx.lines[ref];
+    return !!up && onSet.has(up.addedBy) && effectsCount(scripts, up.addedBy, activeRes);
+  };
+  const slots = new Map();
+  for (const line of visible) {
+    let ref = line.replaces;
+    const walked = new Set();
+    while (ref && !walked.has(ref)) {
+      walked.add(ref);
+      if (!slots.has(ref)) slots.set(ref, []);
+      slots.get(ref).push(line);
+      if (visibleIds.has(ref) || !linkLive(ref)) break;
+      ref = idx.lines[ref].replaces;
+    }
+  }
+
+  const tombCandidates = [];
   for (const line of Object.values(idx.lines)) {
-    if (visible.some((v) => v.id === line.id)) continue;
+    if (visibleIds.has(line.id)) continue;
     if (!onSet.has(line.addedBy)) continue;
     const maker = scripts[line.addedBy];
     if (!maker || (maker.resolves && !activeRes.has(maker.id))) continue;
-    if (replacers.has(line.id) && replacers.get(line.id).length) continue;
+    if (slots.has(line.id) && slots.get(line.id).length) continue;
     const offs = idx.lineOffBy[line.id] || [];
     const switched = offs.some((moveId) => onSet.has(moveId) && effectsCount(scripts, moveId, activeRes));
-    if (switched) tombstones.push(line);
+    if (switched) tombCandidates.push(line);
   }
+
+  // A switched-off replacement whose slot has no visible owner keeps that slot as the
+  // tombstone (D-M1-08): the lines it replaced, directly or through other switched-off
+  // replacements, do not become separate tombstones.
+  const tombWalk = new Map();
+  const occupied = new Set();
+  for (const line of tombCandidates) {
+    const refs = [];
+    let ref = line.replaces;
+    const walked = new Set();
+    while (ref && !walked.has(ref) && !visibleIds.has(ref) && !slots.has(ref)) {
+      walked.add(ref);
+      refs.push(ref);
+      occupied.add(ref);
+      if (!linkLive(ref)) break;
+      ref = idx.lines[ref].replaces;
+    }
+    if (refs.length) tombWalk.set(line, refs);
+  }
+  const tombstones = tombCandidates.filter((line) => !occupied.has(line.id));
+  for (const [line, refs] of tombWalk) {
+    if (occupied.has(line.id)) continue;
+    for (const ref of refs) {
+      if (!slots.has(ref)) slots.set(ref, []);
+      slots.get(ref).push(line);
+    }
+  }
+  for (const group of slots.values()) group.sort((a, b) => cmpLine(scripts, a, b));
 
   const byNodeIds = new Map();
   for (const line of visible) {
@@ -54,12 +108,12 @@ export function weaveFiles(idx, scripts, moveList, activeRes, redactions) {
   const byNode = new Map();
   for (const [node, lines] of byNodeIds) {
     const nodeTombs = tombstones.filter((t) => t.node === node);
-    const ordered = orderVisible(idx, scripts, lines, nodeTombs, replacers);
+    const ordered = orderVisible(idx, scripts, lines, nodeTombs, slots, linkLive);
     const bytes = ordered.map((line) => shownBytes(line, redactions)).join('');
     byNode.set(node, { lines: ordered, bytes, lineIds: ordered.map((line) => line.id) });
   }
 
-  const snags = lineSnags(idx, scripts, moveList, activeRes, visible, replacers);
+  const snags = lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots);
   return { byNode, snags };
 }
 
@@ -75,7 +129,7 @@ function shownBytes(line, redactions) {
   return line.bytes;
 }
 
-export function orderVisible(idx, scripts, visibleLines, tombstones, replacers) {
+export function orderVisible(idx, scripts, visibleLines, tombstones, replacers, linkLive = () => true) {
   const visibleById = new Map(visibleLines.map((line) => [line.id, line]));
   const tombById = new Map(tombstones.map((line) => [line.id, line]));
   const nodes = new Map();
@@ -111,10 +165,18 @@ export function orderVisible(idx, scripts, visibleLines, tombstones, replacers) 
   }
 
   function anchorsFor(line) {
-    if (line.replaces && idx.lines[line.replaces]) {
-      const orig = idx.lines[line.replaces];
-      return { after: orig.after, before: orig.before };
+    // A replacement takes the slot of the line it replaces; for a chain of
+    // replacements that is the slot of the first line in the chain (D-M1-08).
+    let orig = null;
+    let ref = line.replaces;
+    const walked = new Set();
+    while (ref && idx.lines[ref] && !walked.has(ref)) {
+      walked.add(ref);
+      orig = idx.lines[ref];
+      if (!linkLive(ref)) break;
+      ref = orig.replaces;
     }
+    if (orig) return { after: orig.after, before: orig.before };
     return { after: line.after, before: line.before };
   }
 
@@ -177,8 +239,9 @@ function cmpNode(scripts, nodes, a, b) {
   return cmpLine(scripts, nodes.get(a), nodes.get(b));
 }
 
-function lineSnags(idx, scripts, moveList, activeRes, visible, replacers) {
+function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots) {
   const onSet = new Set(moveList);
+  const visibleIds = new Set(visible.map((v) => v.id));
   const snags = [];
   const waitingMoves = moveList.filter((id) => {
     const sc = scripts[id];
@@ -255,24 +318,49 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers) {
     });
   }
 
+  // Kind 3 follows replacement chains (D-M1-13, G-56): the replacements of an `after`
+  // anchor are the visible owners of its slot, direct or through switched-off links.
+  const slotOwners = (id) => (slots.get(id) || []).filter((owner) => visibleIds.has(owner.id));
+  const liveOff = (lineId) => (idx.lineOffBy[lineId] || []).filter((moveId) => onSet.has(moveId) && effectsCount(scripts, moveId, activeRes));
+  const replacedBy = new Map();
+  for (const line of Object.values(idx.lines)) {
+    if (!line.replaces || !onSet.has(line.addedBy) || !effectsCount(scripts, line.addedBy, activeRes)) continue;
+    if (!replacedBy.has(line.replaces)) replacedBy.set(line.replaces, []);
+    replacedBy.get(line.replaces).push(line.id);
+  }
+  const slotEmptiers = (anchor) => {
+    const moves = [];
+    const walked = new Set();
+    const todo = [anchor];
+    while (todo.length) {
+      const id = todo.shift();
+      if (walked.has(id)) continue;
+      walked.add(id);
+      for (const moveId of liveOff(id)) if (!moves.includes(moveId)) moves.push(moveId);
+      for (const next of replacedBy.get(id) || []) todo.push(next);
+    }
+    return moves;
+  };
   const kind3 = new Map();
   for (const line of visible) {
     if (line.replaces) continue;
     if (!line.after || line.after === START) continue;
-    const reps = replacers.get(line.after) || [];
+    const reps = slotOwners(line.after);
     if (!reps.length) continue;
     const anchorLine = idx.lines[line.after];
     // The original successor minted with the anchor is the next line of that
     // move, not a later insert. Ordering slides it past the replacement.
     if (anchorLine && anchorLine.addedBy === line.addedBy) continue;
     const saw = new Set(scripts[line.addedBy]?.saw || []);
-    const unseen = reps.filter((rep) => rep.addedBy !== line.addedBy && !saw.has(rep.addedBy));
+    // Saw exemption (D-M1-12): a replacing move whose `saw` lists the inserting move made
+    // the replacement with the insert in view; that is a sequential edit, not kind 3.
+    const unseen = reps.filter((rep) => rep.addedBy !== line.addedBy && !saw.has(rep.addedBy) && !(scripts[rep.addedBy]?.saw || []).includes(line.addedBy));
     if (!unseen.length) continue;
     if (!kind3.has(line.after)) kind3.set(line.after, []);
     kind3.get(line.after).push(line);
   }
   for (const [anchor, lines] of kind3) {
-    const reps = replacers.get(anchor) || [];
+    const reps = slotOwners(anchor);
     snags.push({
       kind: 3,
       code: 'insert_beside_replaced',
@@ -327,10 +415,17 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers) {
         continue;
       }
       const targetVisible = visible.some((v) => v.id === anchor);
-      const replaced = replacers.has(anchor) && replacers.get(anchor).length > 0;
+      // Chain-aware (D-M1-12, G-56): a slot held by a visible replacement through a
+      // `replaces` chain (spec 2 rule 3) is replaced, not lost.
+      const replaced = (slots.get(anchor) || []).some((l) => visibleIds.has(l.id));
       if (!targetVisible && !replaced && !reportedLost.has(`${line.id}:${anchor}`)) {
         reportedLost.add(`${line.id}:${anchor}`);
-        const offs = (idx.lineOffBy[anchor] || []).filter((moveId) => onSet.has(moveId) && effectsCount(scripts, moveId, activeRes));
+        // The moves that emptied the slot (D-M1-16): those that switch the anchor off, plus
+        // those that switch off any live replacement of it, up the chain. The saw exemption
+        // (D-M1-12) needs every one of them to have seen the anchored line's move.
+        const offs = slotEmptiers(anchor);
+        // Saw exemption (D-M1-12): every switching-off move saw the anchored line's move.
+        if (offs.length && offs.every((moveId) => (scripts[moveId]?.saw || []).includes(line.addedBy))) continue;
         snags.push({
           kind: 5,
           code: 'anchor_lost',
