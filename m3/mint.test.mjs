@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { carry, checkin, createRepo, exportStream, forkStream, inspect, movesOn, pull, redact, restore } from './engine.mjs';
-import { START, END } from './weave.mjs';
+import { START, END, parseMintLineId } from './weave.mjs';
 import { withIntent } from './fixture.mjs';
 import { hashOf } from './canon.mjs';
 import { MINT_ALGO, MINT_MAX_CELLS, alignLines, beforeFromView, mintLineId, mintScript, splitLines } from './mint.mjs';
@@ -1223,6 +1223,20 @@ test('M1-49 beforeFromView of a file wiped empty returns []; a whole-content fil
   assert.equal(whole.bytes, 'abc');
   assert.deepEqual(whole.lineIds, []);
   assert.throws(() => beforeFromView(bin, inspect(bin, 'dev'), 'bin'), /whole-content file/);
+});
+
+test('parseMintLineId is the inverse of mintLineId, including a move id that contains a colon (D-M1-24)', () => {
+  assert.deepEqual(parseMintLineId(mintLineId('move.117', 0)), { move: 'move.117', n: 0 });
+  assert.deepEqual(parseMintLineId(mintLineId('foo:bar', 0)), { move: 'foo:bar', n: 0 });
+  assert.deepEqual(parseMintLineId(mintLineId('seed.rich@desk.4', 12)), { move: 'seed.rich@desk.4', n: 12 });
+  assert.equal(parseMintLineId('L117.0'), null);
+  assert.equal(parseMintLineId('NOPE'), null);
+  assert.equal(parseMintLineId('L:foo'), null);
+  assert.equal(parseMintLineId('L::0'), null);
+  assert.equal(parseMintLineId('L:foo:'), null);
+  assert.equal(parseMintLineId('L:foo:00'), null);
+  assert.equal(parseMintLineId('L:foo:-1'), null);
+  assert.deepEqual(parseMintLineId('L:foo:0'), { move: 'foo', n: 0 });
 });
 
 const MINT_V1_VECTOR_HASH = 'sha256:cb1d7a82d0a9cfd559f382a479c64855743b0d0175e89be7ecd6a3df9ac4771c';

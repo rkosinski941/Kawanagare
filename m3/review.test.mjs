@@ -1,6 +1,6 @@
 /**
  * Review findings at main 03b8202 (automated review H1-H7, M1, M4, L1; second review: resolution
- * then normal mint edit). Each test is the repro of one finding. Ids: RV-<finding>.
+ * then normal mint edit) and G-64 (D-M1-24). Each test is the repro of one finding. Ids: RV-<finding>.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -267,6 +267,64 @@ test('RV-H5 carryRaft of a member whose signature is bad is refused script_missi
   assert.equal(res.ok, false);
   assert.equal(res.code, 'script_missing');
   assert.deepEqual(movesOn(repo, 'dev'), ['seed']);
+});
+
+// ---------------------------------------------------------------- M1 / G-64 maker-attributed kind 4 (D-M1-24)
+
+test('RV-M1 an unknown anchor stays kind 4 while an unrelated move is waiting', () => {
+  const repo = seedRepo('X\n');
+  handIn(repo, 'dev', { id: 'n', orderKey: '2', saw: ['seed'], lines: [{ id: 'Ln', node: FILE, bytes: 'n\n', after: 'NOPE', before: END }] });
+  assert.deepEqual(inspect(repo, 'dev').snags.map((s) => [s.kind, s.spot]), [[4, 'NOPE']]);
+  landEvent(repo, 'dev', { kind: 'checkin', move: 'waiting.move' });
+  const view = inspect(repo, 'dev');
+  assert.deepEqual(view.snags.map((s) => [s.kind, s.spot]), [[4, 'NOPE']]);
+  assert.deepEqual(view.notices.filter((n) => n.kind === 'waiting').map((n) => n.move), ['waiting.move']);
+});
+
+test('RV-M1 control: an anchor whose id names the waiting move is a waiting notice, not kind 4', () => {
+  const repo = seedRepo('X\n');
+  landEvent(repo, 'dev', { kind: 'checkin', move: 'w' });
+  handIn(repo, 'dev', { id: 'n', orderKey: '2', saw: ['seed'], lines: [{ id: 'Ln', node: FILE, bytes: 'n\n', after: 'L:w:0', before: END }] });
+  const view = inspect(repo, 'dev');
+  assert.deepEqual(view.snags, []);
+  assert.equal(view.exportable, false);
+});
+
+test('RV-M1 two waiting moves: only the named maker suppresses kind 4', () => {
+  const repo = seedRepo('X\n');
+  landEvent(repo, 'dev', { kind: 'checkin', move: 'w1' });
+  landEvent(repo, 'dev', { kind: 'checkin', move: 'w2' });
+  handIn(repo, 'dev', { id: 'named', orderKey: '2', saw: ['seed'], lines: [{ id: 'Ln', node: FILE, bytes: 'n\n', after: 'L:w1:0', before: END }] });
+  const named = inspect(repo, 'dev');
+  assert.deepEqual(named.snags, []);
+  assert.deepEqual(named.notices.filter((n) => n.kind === 'waiting').map((n) => n.move), ['w1', 'w2']);
+  assert.equal(named.exportable, false);
+  handIn(repo, 'dev', { id: 'other', orderKey: '3', saw: ['seed'], lines: [{ id: 'Lo', node: FILE, bytes: 'o\n', after: 'L:w3:0', before: END }] });
+  const other = inspect(repo, 'dev');
+  assert.deepEqual(other.snags.map((s) => [s.kind, s.spot, s.need]), [[4, 'L:w3:0', null]]);
+  assert.deepEqual(other.notices.filter((n) => n.kind === 'waiting').map((n) => n.move), ['w1', 'w2']);
+  assert.equal(other.exportable, false);
+});
+
+test('RV-M1 a mint-v1 id whose named move has no event is kind 4', () => {
+  const repo = seedRepo('X\n');
+  handIn(repo, 'dev', { id: 'n', orderKey: '2', saw: ['seed'], lines: [{ id: 'Ln', node: FILE, bytes: 'n\n', after: 'L:ghost:0', before: END }] });
+  const view = inspect(repo, 'dev');
+  assert.deepEqual(view.snags.map((s) => [s.kind, s.spot, s.need]), [[4, 'L:ghost:0', null]]);
+  assert.equal(view.notices.some((n) => n.kind === 'waiting'), false);
+});
+
+test('RV-M1 a mint-v1 id whose move id contains a colon attributes to that move', () => {
+  const repo = seedRepo('X\n');
+  landEvent(repo, 'dev', { kind: 'checkin', move: 'foo:bar' });
+  handIn(repo, 'dev', { id: 'named', orderKey: '2', saw: ['seed'], lines: [{ id: 'Ln', node: FILE, bytes: 'n\n', after: 'L:foo:bar:0', before: END }] });
+  const named = inspect(repo, 'dev');
+  assert.deepEqual(named.snags, []);
+  assert.deepEqual(named.notices.filter((n) => n.kind === 'waiting').map((n) => n.move), ['foo:bar']);
+  assert.equal(named.exportable, false);
+  handIn(repo, 'dev', { id: 'short', orderKey: '3', saw: ['seed'], lines: [{ id: 'Ls', node: FILE, bytes: 's\n', after: 'L:foo:0', before: END }] });
+  const shorter = inspect(repo, 'dev');
+  assert.deepEqual(shorter.snags.map((s) => [s.kind, s.spot, s.need]), [[4, 'L:foo:0', null]]);
 });
 
 // ---------------------------------------------------------------- L1 a deleter side is never twin
