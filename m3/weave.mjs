@@ -16,6 +16,22 @@ export const START = 'START';
 export const END = 'END';
 
 /**
+ * Parse a mint-v1 line id `L:<move>:<n>` (D-M1-04, D-M1-24). The last `:`
+ * separates a non-negative integer `n` (no leading zeros except `0` itself).
+ * The move id may contain `:`. Returns `{move, n}` or null. Inverse of
+ * `mintLineId` in mint.mjs.
+ */
+export function parseMintLineId(id) {
+  if (typeof id !== 'string' || !id.startsWith('L:')) return null;
+  const last = id.lastIndexOf(':');
+  if (last <= 2) return null;
+  const move = id.slice(2, last);
+  const n = id.slice(last + 1);
+  if (!move || !/^(0|[1-9][0-9]*)$/.test(n)) return null;
+  return { move, n: Number(n) };
+}
+
+/**
  * @returns {{byNode: Map<string, {lines: object[], bytes: string}>, snags: object[], choices: Map<string, object[]>}}
  */
 export function weaveFiles(idx, scripts, moveList, activeRes, redactions) {
@@ -445,7 +461,11 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots,
       // nothing is lost. Same rule as the kind 3 skip above. `replaces` is not exempt.
       if (target && anchor !== line.replaces && target.addedBy === line.addedBy) continue;
       if (!target) {
-        if (waitingMoves.length === 0) {
+        // D-M1-24 (G-64): only a mint-v1 id whose named move is waiting
+        // suppresses kind 4. Any other unknown anchor is kind 4 immediately.
+        const parsed = parseMintLineId(anchor);
+        const awaitsMaker = parsed && waitingMoves.includes(parsed.move);
+        if (!awaitsMaker) {
           snags.push({
             kind: 4,
             code: 'missing_need',

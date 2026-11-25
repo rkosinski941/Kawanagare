@@ -128,7 +128,7 @@ test('T05 kind 4: anchoring on a pulled move is missing-need, not a waiting noti
   assert.equal(view.notices.some((notice) => notice.kind === 'waiting'), false);
 });
 
-test('T06 waiting: a missing script is a notice that holds export and is not kind 4', () => {
+test('T06 waiting: a missing script is a notice that holds export; a hand-written unknown anchor is still kind 4', () => {
   const repo = createRepo();
   checkin(repo, 'dev', withIntent({
     id: 'seed',
@@ -145,6 +145,36 @@ test('T06 waiting: a missing script is a notice that holds export and is not kin
     id: 'move.B',
     orderKey: '2',
     lines: [{ id: 'B1', node: 'f', bytes: 'x\n', after: 'L117.0', before: END }],
+  }));
+  const view = inspect(repo, 'dev');
+  const waiting = view.notices.find((notice) => notice.kind === 'waiting');
+  assert.ok(waiting);
+  assert.equal(waiting.move, 'move.117');
+  assert.equal(waiting.site, 'desk');
+  const missing = view.snags.filter((snag) => snag.kind === 4);
+  assert.equal(missing.length, 1);
+  assert.equal(missing[0].spot, 'L117.0');
+  assert.equal(missing[0].need, null);
+  assert.equal(view.exportable, false);
+});
+
+test('T06b waiting: a mint-v1 anchor that names the waiting move is a notice, not kind 4', () => {
+  const repo = createRepo();
+  checkin(repo, 'dev', withIntent({
+    id: 'seed',
+    orderKey: '1',
+    nodes: [
+      { id: 'root', kind: 'pool', root: true },
+      { id: 'f', kind: 'file' },
+    ],
+    entries: [{ id: 'Ef', pool: 'root', node: 'f', name: 't.txt' }],
+    lines: [{ id: 'L0', node: 'f', bytes: 'base\n', after: START, before: END }],
+  }));
+  landEvent(repo, 'dev', { kind: 'checkin', move: 'move.117', site: 'desk' });
+  checkin(repo, 'dev', withIntent({
+    id: 'move.B',
+    orderKey: '2',
+    lines: [{ id: 'B1', node: 'f', bytes: 'x\n', after: 'L:move.117:0', before: END }],
   }));
   const view = inspect(repo, 'dev');
   const waiting = view.notices.find((notice) => notice.kind === 'waiting');
