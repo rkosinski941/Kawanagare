@@ -10,7 +10,7 @@
  * neighbors keep their places, then drop out of the visible text.
  */
 
-import { cmpLine, lineVisible } from './model.mjs';
+import { cmpCodeUnit, cmpLine, cmpOrderKey, lineVisible, orderKeyOf } from './model.mjs';
 
 export const START = 'START';
 export const END = 'END';
@@ -263,6 +263,8 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots,
     const inputs = sc?.resolves && activeRes.has(moveId) ? sc.resolves.inputs || [] : [];
     return [...sawOf(moveId), ...inputs];
   };
+  const bySideOrder = (a, b) => cmpOrderKey(orderKeyOf(scripts, a), orderKeyOf(scripts, b)) || cmpCodeUnit(a, b);
+  const byScriptOrder = (a, b) => (a.seq || 0) - (b.seq || 0) || cmpCodeUnit(a.id, b.id);
   const seenEither = (a, b) => sawForSlot(a).includes(b) || sawForSlot(b).includes(a);
   // A deleter is settled at a slot (D-M1-21) while an active resolution lists it in
   // `resolves.inputs` and lists the slot in `resolves.contested`. A later edit of the
@@ -319,13 +321,16 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots,
       byMove.get(line.addedBy).push(line);
     }
     for (const moveId of deleters) if (!byMove.has(moveId)) byMove.set(moveId, []);
-    const moves = [...byMove.keys()].sort((a, b) => cmpLine(scripts, { addedBy: a, seq: 0, id: a }, { addedBy: b, seq: 0, id: b }));
-    const sides = moves.map((moveId) => ({
-      move: moveId,
-      lines: byMove.get(moveId).map((line) => line.id),
-      bytes: byMove.get(moveId).map((line) => line.bytes).join(''),
-    }));
-    const ownerMoves = moves.filter((moveId) => byMove.get(moveId).length);
+    // Report order (D-M1-23, spec 4.3): `sides` by order_key then move id, each side's lines in
+    // script order, `lines` following `sides`, `moves` by move id.
+    const sideMoves = [...byMove.keys()].sort(bySideOrder);
+    const sides = sideMoves.map((moveId) => {
+      const group = byMove.get(moveId).slice().sort(byScriptOrder);
+      return { move: moveId, lines: group.map((line) => line.id), bytes: group.map((line) => line.bytes).join('') };
+    });
+    const moves = sideMoves.slice().sort(cmpCodeUnit);
+    // `detail` text names moves in side (display) order, as before D-M1-23.
+    const ownerMoves = sideMoves.filter((moveId) => byMove.get(moveId).length);
     snags.push({
       kind: 1,
       code: 'same_slot',
@@ -333,12 +338,12 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots,
       spot: slot,
       node: owners[0].node,
       moves,
-      lines: owners.map((line) => line.id),
+      lines: sides.flatMap((side) => side.lines),
       sides,
       choices: dormantChoices(scripts, moveList, activeRes, slot),
       detail: deleters.length
         ? `line ${slot} replaced by ${ownerMoves.join(', ')}; switched off without replacement by ${deleters.slice().sort().join(', ')}`
-        : `line ${slot} replaced by ${moves.join(', ')}`,
+        : `line ${slot} replaced by ${sideMoves.join(', ')}`,
     });
   }
 
@@ -357,11 +362,11 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots,
     }
     if (byMove.size < 2) continue;
     const [, after, before] = key.split('\0');
-    const moves = [...byMove.keys()];
-    const runs = moves.map((moveId) => {
-      const group = byMove.get(moveId).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
+    const runs = [...byMove.keys()].sort(bySideOrder).map((moveId) => {
+      const group = byMove.get(moveId).slice().sort(byScriptOrder);
       return { move: moveId, lines: group.map((line) => line.id), bytes: group.map((line) => line.bytes).join(''), count: group.length };
     });
+    const moves = runs.map((run) => run.move).sort(cmpCodeUnit);
     const identical = runs.every((run) => run.bytes === runs[0].bytes);
     const common = runs.every((run) => run.count === 1 && isCommonLine(run.bytes));
     snags.push({
@@ -371,7 +376,7 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots,
       spot: `${after}|${before}`,
       node: lines[0].node,
       moves,
-      lines: lines.map((line) => line.id),
+      lines: runs.flatMap((run) => run.lines),
       sides: runs,
       after,
       before,
@@ -421,8 +426,8 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots,
       twin: false,
       spot: anchor,
       node: lines[0].node,
-      moves: unique([...lines.map((line) => line.addedBy), ...reps.map((line) => line.addedBy)]),
-      lines: lines.map((line) => line.id),
+      moves: unique([...lines.map((line) => line.addedBy), ...reps.map((line) => line.addedBy)]).sort(cmpCodeUnit),
+      lines: lines.slice().sort((a, b) => cmpLine(scripts, a, b)).map((line) => line.id),
       detail: `insert after ${anchor}, which is replaced`,
     });
   }
@@ -516,7 +521,10 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots,
     }
   }
 
-  return mergeBySpot(mergeBySpot(dedupeKind4(snags), 4), 5);
+  // Every snag lists `moves` by move id, UTF-16 code unit order (D-M1-23, spec 4.3).
+  const merged = mergeBySpot(mergeBySpot(dedupeKind4(snags), 4), 5);
+  for (const snag of merged) snag.moves = snag.moves.slice().sort(cmpCodeUnit);
+  return merged;
 }
 
 function dormantChoices(scripts, moveList, activeRes, slot) {

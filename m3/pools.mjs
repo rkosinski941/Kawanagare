@@ -145,7 +145,9 @@ function attributeSnags(visibleAttrs, scripts) {
     }
     if (byMove.size < 2) continue;
     const [node, attrKey] = key.split('\0');
-    const moves = [...byMove.keys()].sort((a, b) => cmpLine(scripts, { addedBy: a, seq: 0, id: a }, { addedBy: b, seq: 0, id: b }));
+    // Report order (D-M1-23): `sides` by order_key then move id, `moves` by move id.
+    const sideMoves = [...byMove.keys()].sort((a, b) => cmpLine(scripts, { addedBy: a, seq: 0, id: a }, { addedBy: b, seq: 0, id: b }));
+    const moves = sideMoves.slice().sort(cmpCodeUnit);
     snags.push({
       kind: 10,
       code: 'attribute',
@@ -154,7 +156,7 @@ function attributeSnags(visibleAttrs, scripts) {
       node,
       key: attrKey,
       moves,
-      sides: moves.map((moveId) => ({
+      sides: sideMoves.map((moveId) => ({
         move: moveId,
         values: byMove.get(moveId).map((attr) => attr.value),
       })),

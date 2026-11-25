@@ -131,6 +131,53 @@ test('RV-RES control: a new unseen deleter of the settled line is still kind 1 (
   assert.deepEqual(view.snags.map((s) => [s.kind, s.spot, s.moves.slice().sort()]), [[1, 'L:seed:0', ['D2', 'M']]]);
 });
 
+// ---------------------------------------------------------------- H6 snag report order (D-M1-23)
+
+function twoReplacers(order) {
+  const repo = seedRepo('X\nY\n');
+  forkStream(repo, 'dev', 'sa');
+  forkStream(repo, 'dev', 'sb');
+  handIn(repo, 'sb', { id: 'm.b', orderKey: '5', saw: ['seed'], off: ['L:seed:0'], lines: [{ id: 'Lb', node: FILE, bytes: 'b\n', after: START, before: 'L:seed:1', replaces: 'L:seed:0' }] });
+  handIn(repo, 'sa', { id: 'm.a', orderKey: '9', saw: ['seed'], off: ['L:seed:0'], lines: [{ id: 'La', node: FILE, bytes: 'a\n', after: START, before: 'L:seed:1', replaces: 'L:seed:0' }] });
+  for (const id of order) assert.equal(carry(repo, 'dev', id).ok, true);
+  return inspect(repo, 'dev');
+}
+
+test('RV-H6 kind 1: moves by move id, sides by order_key then id, lines follow sides; arrival order does not matter', () => {
+  for (const order of [['m.b', 'm.a'], ['m.a', 'm.b']]) {
+    const snag = twoReplacers(order).snags[0];
+    assert.equal(snag.kind, 1);
+    assert.deepEqual(snag.moves, ['m.a', 'm.b']);
+    assert.deepEqual(snag.sides.map((side) => side.move), ['m.b', 'm.a']);
+    assert.deepEqual(snag.lines, ['Lb', 'La']);
+  }
+});
+
+function threeInserts(order) {
+  const repo = seedRepo('X\nY\n');
+  const keys = { 'm.c': '6', 'm.a': '8', 'm.b': '7' };
+  for (const id of ['m.c', 'm.a', 'm.b']) {
+    forkStream(repo, 'dev', `s.${id}`);
+    handIn(repo, `s.${id}`, { id, orderKey: keys[id], saw: ['seed'], lines: [{ id: `L${id.slice(2)}`, node: FILE, bytes: `${id.slice(2)}\n`, after: 'L:seed:0', before: 'L:seed:1' }] });
+  }
+  for (const id of order) assert.equal(carry(repo, 'dev', id).ok, true);
+  return inspect(repo, 'dev');
+}
+
+test('RV-H6 kind 2 with three sides: moves by id, sides and lines by order_key; same report for two arrival orders (T61b)', () => {
+  const one = threeInserts(['m.c', 'm.a', 'm.b']);
+  const two = threeInserts(['m.b', 'm.c', 'm.a']);
+  for (const view of [one, two]) {
+    const snag = view.snags[0];
+    assert.equal(snag.kind, 2);
+    assert.deepEqual(snag.moves, ['m.a', 'm.b', 'm.c']);
+    assert.deepEqual(snag.sides.map((side) => side.move), ['m.c', 'm.b', 'm.a']);
+    assert.deepEqual(snag.lines, ['Lc', 'Lb', 'La']);
+    assert.equal(fileOf(view).bytes, 'X\nc\nb\na\nY\n');
+  }
+  assert.deepEqual(two.snags, one.snags);
+});
+
 // ---------------------------------------------------------------- M4 order_key comparison (D-M1-22)
 
 test('RV-M4 cmpOrderKey is locale-free: non-integer keys compare by UTF-16 code unit; integer keys compare exactly (no Number rounding)', () => {
