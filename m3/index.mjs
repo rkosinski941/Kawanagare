@@ -15,3 +15,4 @@ import './needs.test.mjs';
 import './raft.test.mjs';
 import './kind5.test.mjs';
 import './mint.test.mjs';
+import './review.test.mjs';

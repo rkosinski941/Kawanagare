@@ -933,7 +933,7 @@ export function computeView(repo, moveList, policy = repo.policy, scriptOverlay 
       continue;
     }
     if (!sc.resolves) continue;
-    const reason = dormantReason(sc, moveList, idx, scripts);
+    const reason = dormantReason(sc, moveList, idx, scripts, active);
     if (reason) {
       notices.push({
         kind: 'dormant_resolution',
