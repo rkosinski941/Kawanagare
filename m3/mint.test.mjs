@@ -1140,4 +1140,89 @@ test('M1-46 two inserts from different moves after a chain-replaced anchor (D-M1
   assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot, snag.lines, snag.moves.slice().sort()]), [[3, 'L:seed:0', ['L:insBlind:0'], ['insBlind', 'r2']]]);
 });
 
+// ---------------------------------------------------------------- stronger variants from CloudWork/pr16-missing-tests (3a3bdab)
+
+const rowsKSLM = (view) => view.snags.map((snag) => [snag.kind, snag.spot, snag.lines, snag.moves.slice().sort()]);
+
+test('M1-47 a pulled middle link ends the chain with anchors that are not in place: C uses B\'s anchors, not A\'s (D-M1-15; 3a3bdab M1-32)', () => {
+  // Seed L X R. A replaces X in place. B replaces A's line but stores anchors before L.
+  // C replaces B's line and stores anchors after R. While B is on, the walk reaches X, so C
+  // sits in X's slot between L and R. After B is pulled, the walk stops at B and C takes B's
+  // anchors (before L): not X's (L..END) and not its own (after R). 3a3bdab used anchors that
+  // X's slot also allows; these do not, so climbing past B fails this test.
+  const repo = seedRepo('L\nX\nR\n');
+  mintIn(repo, 'dev', 'A', '2', 'L\nA\nR\n');
+  handIn(repo, 'dev', {
+    id: 'B', orderKey: '3', saw: ['A', 'seed'], off: ['L:A:0'],
+    lines: [{ id: 'Lb', node: FILE, bytes: 'B\n', after: START, before: 'L:seed:0', replaces: 'L:A:0' }],
+  });
+  handIn(repo, 'dev', {
+    id: 'C', orderKey: '4', saw: ['A', 'B', 'seed'], off: ['Lb'],
+    lines: [{ id: 'Lc', node: FILE, bytes: 'C\n', after: 'L:seed:2', before: END, replaces: 'Lb' }],
+  });
+  const live = inspect(repo, 'dev');
+  assert.equal(fileOf(live).bytes, 'L\nC\nR\n');
+  assert.deepEqual(fileOf(live).lineIds, ['L:seed:0', 'Lc', 'L:seed:2']);
+  assert.deepEqual(live.snags, []);
+  assert.equal(pull(repo, 'dev', 'B').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'C\nL\nA\nR\n');
+  assert.deepEqual(fileOf(view).lineIds, ['Lc', 'L:seed:0', 'L:A:0', 'L:seed:2']);
+  assert.deepEqual(rowsKSLM(view), [[4, 'Lb', ['Lc'], ['B', 'C']]]);
+});
+
+test('M1-48 a pulled mid-chain maker puts the tombstone at that link\'s anchors, not the original line\'s (D-M1-08, D-M1-15; 3a3bdab M1-33)', () => {
+  // P Q X S. A replaces X. B replaces A's line but stores anchors between P and Q. C replaces B.
+  // Del switches C off with no successor: C is the tombstone. After B is pulled, the tomb walk
+  // stops at B. An insert anchored on the tombstone, before Q, lands between P and Q.
+  const repo = seedRepo('P\nQ\nX\nS\n');
+  mintIn(repo, 'dev', 'A', '2', 'P\nQ\nA\nS\n');
+  handIn(repo, 'dev', {
+    id: 'B', orderKey: '3', saw: ['A', 'seed'], off: ['L:A:0'],
+    lines: [{ id: 'Rb', node: FILE, bytes: 'B\n', after: 'L:seed:0', before: 'L:seed:1', replaces: 'L:A:0' }],
+  });
+  handIn(repo, 'dev', {
+    id: 'C', orderKey: '4', saw: ['A', 'B', 'seed'], off: ['Rb'],
+    lines: [{ id: 'Rc', node: FILE, bytes: 'C\n', after: START, before: END, replaces: 'Rb' }],
+  });
+  handIn(repo, 'dev', { id: 'Del', orderKey: '5', saw: ['A', 'B', 'C', 'seed'], off: ['Rc'] });
+  const held = inspect(repo, 'dev');
+  assert.equal(fileOf(held).bytes, 'P\nQ\nS\n');
+  assert.deepEqual(fileOf(held).lineIds, ['L:seed:0', 'L:seed:1', 'L:seed:3']);
+  assert.deepEqual(held.snags, []);
+  assert.equal(pull(repo, 'dev', 'B').ok, true);
+  handIn(repo, 'dev', {
+    id: 'M', orderKey: '6', saw: ['A', 'C', 'Del', 'seed'],
+    lines: [{ id: 'Im', node: FILE, bytes: 'M\n', after: 'Rc', before: 'L:seed:1' }],
+  });
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'P\nM\nQ\nA\nS\n');
+  assert.deepEqual(fileOf(view).lineIds, ['L:seed:0', 'Im', 'L:seed:1', 'L:A:0', 'L:seed:3']);
+  assert.deepEqual(rowsKSLM(view), [
+    [5, 'Rc', ['Im'], ['Del', 'M']],
+    [4, 'Rb', ['Rb'], ['B', 'C']],
+  ]);
+});
+
+test('M1-49 beforeFromView of a file wiped empty returns []; a whole-content file throws (3a3bdab M1-35)', () => {
+  const repo = seedRepo('a\n');
+  mintIn(repo, 'dev', 'wipe', '2', '');
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, '');
+  assert.deepEqual(fileOf(view).lineIds, []);
+  assert.deepEqual(beforeFromView(repo, view, FILE), []);
+  const bin = createRepo();
+  assert.equal(checkin(bin, 'dev', withIntent({
+    id: 'seed',
+    orderKey: '1',
+    nodes: [{ id: 'root', kind: 'pool', root: true }, { id: 'bin', kind: 'file' }],
+    entries: [{ id: 'Eb', pool: 'root', node: 'bin', name: 'blob.bin' }],
+    attributes: [{ id: 'seed:content', node: 'bin', key: 'content', value: 'abc' }],
+  })).ok, true);
+  const whole = inspect(bin, 'dev').files[0];
+  assert.equal(whole.bytes, 'abc');
+  assert.deepEqual(whole.lineIds, []);
+  assert.throws(() => beforeFromView(bin, inspect(bin, 'dev'), 'bin'), /whole-content file/);
+});
+
 const MINT_V1_VECTOR_HASH = 'sha256:cb1d7a82d0a9cfd559f382a479c64855743b0d0175e89be7ecd6a3df9ac4771c';
