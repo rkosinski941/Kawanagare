@@ -164,14 +164,21 @@ export function cmpCodeUnit(a, b) {
   return as < bs ? -1 : as > bs ? 1 : 0;
 }
 
+const INT_KEY = /^-?[0-9]+$/;
+
+/**
+ * The order_key comparison (spec 2, D-M1-22). Locale-free. Two keys that are both integers
+ * (an optional "-" and ASCII digits) compare by exact integer value, with no float rounding.
+ * Otherwise, and when the values are equal ("01" and "1"), keys compare by UTF-16 code unit.
+ */
 export function cmpOrderKey(a, b) {
   const as = String(a);
   const bs = String(b);
-  if (/^-?\d+$/.test(as) && /^-?\d+$/.test(bs)) {
-    const delta = Number(as) - Number(bs);
-    if (delta) return delta;
+  if (INT_KEY.test(as) && INT_KEY.test(bs)) {
+    const delta = BigInt(as) - BigInt(bs);
+    if (delta) return delta < 0n ? -1 : 1;
   }
-  return as.localeCompare(bs);
+  return cmpCodeUnit(as, bs);
 }
 
 export function orderKeyOf(scripts, moveId) {
@@ -184,7 +191,7 @@ export function cmpLine(scripts, a, b) {
   if (byKey) return byKey;
   const bySeq = (a.seq || 0) - (b.seq || 0);
   if (bySeq) return bySeq;
-  return String(a.id).localeCompare(String(b.id));
+  return cmpCodeUnit(a.id, b.id);
 }
 
 /** Why a resolution is dormant, or null when it is active. */

@@ -4,7 +4,7 @@
  * A second walk reports entries whose pool cannot be reached.
  */
 
-import { entryVisible, attrVisible, cmpLine } from './model.mjs';
+import { entryVisible, attrVisible, cmpCodeUnit, cmpLine } from './model.mjs';
 import { DEFAULT_POLICY, forbiddenName, joinRepoPath, nameKey, sameName } from './names.mjs';
 
 export function poolView(idx, scripts, moveList, activeRes, policy, root) {
@@ -170,7 +170,7 @@ function walk(pool, path, byPool, idx, reachable, files, directories, emptyDirs,
   stack.add(pool);
   const node = idx.nodes[pool];
   if (node && node.kind === 'pool') directories.push({ path, node: pool });
-  const children = (byPool.get(pool) || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const children = (byPool.get(pool) || []).slice().sort((a, b) => cmpCodeUnit(a.name, b.name));
   if (path && children.length === 0) emptyDirs.push({ path, node: pool });
   for (const entry of children) {
     const childPath = joinRepoPath(path, entry.name);

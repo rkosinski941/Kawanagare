@@ -131,3 +131,27 @@ test('RV-RES control: a new unseen deleter of the settled line is still kind 1 (
   assert.deepEqual(view.snags.map((s) => [s.kind, s.spot, s.moves.slice().sort()]), [[1, 'L:seed:0', ['D2', 'M']]]);
 });
 
+// ---------------------------------------------------------------- M4 order_key comparison (D-M1-22)
+
+test('RV-M4 cmpOrderKey is locale-free: non-integer keys compare by UTF-16 code unit; integer keys compare exactly (no Number rounding)', () => {
+  assert.equal(Math.sign(cmpOrderKey('a', 'B')), 1);
+  assert.equal(Math.sign(cmpOrderKey('B', 'a')), -1);
+  assert.equal(Math.sign(cmpOrderKey('ä', 'z')), 1);
+  assert.equal(Math.sign(cmpOrderKey('2', '10')), -1);
+  assert.equal(Math.sign(cmpOrderKey('9007199254740993', '9007199254740992')), 1);
+  assert.equal(Math.sign(cmpOrderKey('-3', '2')), -1);
+  assert.equal(Math.sign(cmpOrderKey('01', '1')), -1);
+  assert.equal(cmpOrderKey('7', '7'), 0);
+});
+
+test('RV-M4 pool entries are walked in UTF-16 name order (B before a)', () => {
+  const repo = createRepo();
+  assert.equal(checkin(repo, 'dev', withIntent({
+    id: 'seed', orderKey: '1',
+    nodes: [{ id: 'root', kind: 'pool', root: true }, { id: 'na', kind: 'file' }, { id: 'nB', kind: 'file' }],
+    entries: [{ id: 'Ea', pool: 'root', node: 'na', name: 'a' }, { id: 'EB', pool: 'root', node: 'nB', name: 'B' }],
+    lines: [{ id: 'la', node: 'na', bytes: 'a\n' }, { id: 'lB', node: 'nB', bytes: 'B\n' }],
+  })).ok, true);
+  assert.deepEqual(inspect(repo, 'dev').files.map((file) => file.path), ['B', 'a']);
+});
+
