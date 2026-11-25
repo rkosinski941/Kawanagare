@@ -257,6 +257,10 @@ Two bots inserting into different gaps of the same file do not snag. Two bots re
 | 11 | **Exposed by an event** | A tag on one of the above when a pull, restore, carry, raft pull, or policy event is what made the snag appear. One problem stays one snag. |
 | E | **Event snag** | Two sites' flow-log events fork from one parent and the later one's meaning changed (§6), or an event's script fails its signature. |
 
+**Kind 1, precisely.**
+
+- Through a chain (§2 rule 3, D-M1-18): a visible replacement holds every slot up its `replaces` chain. Two visible replacements from different on-moves that reach one slot through different links are kind 1 at that slot. Replacements that reach a slot through a shared link meet at that link first; kind 1 is reported there, once. The chain walk is the §2 rule 3 walk and ends where §2 rule 3 ends it.
+
 **Kind 3, precisely.** This is the ambiguous case, not every neighbor of a replaced line.
 
 - Kind 3 fires when an in-play insert uses a replaced line as its **`after`** anchor (the left edge it attached to), and `saw` does not include the replacing move. Assemble still places the insert after the replacement, and reports the snag, so the caller sees both the text and the break (T04).

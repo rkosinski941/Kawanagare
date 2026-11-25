@@ -629,7 +629,24 @@ function predictedSnags(repo, stream) {
     }
     for (const [key, moves] of groups) if (moves.size > 1) out.add(`${kind}|${key}`);
   };
-  group((line) => line.replaces || null, 1);
+  // Kind 1 through chains (D-M1-18): owners reaching one slot through different links.
+  const slotHits = new Map();
+  for (const v of visible) {
+    let ref = v.replaces;
+    let via = v.id;
+    const walked = new Set();
+    while (ref && !walked.has(ref)) {
+      walked.add(ref);
+      if (!slotHits.has(ref)) slotHits.set(ref, []);
+      slotHits.get(ref).push({ move: v.addedBy, via });
+      if (isVisible(ref)) break;
+      via = ref;
+      ref = lines.get(ref)?.replaces;
+    }
+  }
+  for (const [slot, hits] of slotHits) {
+    if (hits.some((a) => hits.some((b) => a.via !== b.via && a.move !== b.move))) out.add(`1|${slot}`);
+  }
   group((line) => (line.replaces ? null : `${line.after}|${line.before}`), 2);
   for (const x of visible) {
     if (!x.replaces && x.after !== START) {
@@ -823,6 +840,56 @@ test('M1-30 kind 5 counts the move that emptied the slot (D-M1-16): B1 saw the i
   mintIn(ok, 'dev', 'B1', '3', 'P\ni\nR\n');
   mintIn(ok, 'dev', 'B2', '4', 'P\ni\n');
   assert.deepEqual(inspect(ok, 'dev').snags, []);
+});
+
+// ---------------------------------------------------------------- kind 1 through replacement chains (D-M1-18; Opus review gap 1)
+
+const snagRows = (view) => view.snags.map((snag) => [snag.kind, snag.spot, snag.moves.slice().sort(), (snag.sides || []).map((side) => [side.move, side.bytes])]);
+
+test('M1-31 kind 1 through a chain (D-M1-18): A: X -> R1, B: R1 -> R2 on dev; C (saw seed only) X -> R3; one kind 1 at X, both arrival orders', () => {
+  const build = (order) => {
+    const repo = seedRepo('X\nY\n');
+    forkStream(repo, 'dev', 'C');
+    forkStream(repo, 'dev', 'AB');
+    mintIn(repo, 'AB', 'A', '2', 'R1\nY\n');
+    mintIn(repo, 'AB', 'B', '3', 'R2\nY\n');
+    const c = mintIn(repo, 'C', 'C', '4', 'R3\nY\n');
+    assert.equal(c.lines[0].replaces, 'L:seed:0');
+    for (const id of order) assert.equal(carry(repo, 'dev', id).ok, true);
+    return inspect(repo, 'dev');
+  };
+  const one = build(['A', 'B', 'C']);
+  const two = build(['C', 'A', 'B']);
+  assert.equal(fileOf(one).bytes, 'R2\nR3\nY\n');
+  assert.deepEqual(fileOf(two).lineIds, fileOf(one).lineIds);
+  assert.deepEqual(snagRows(one), [[1, 'L:seed:0', ['B', 'C'], [['B', 'R2\n'], ['C', 'R3\n']]]]);
+  assert.deepEqual(snagRows(two), snagRows(one));
+  assert.equal(one.exportable, false);
+});
+
+test('M1-32 kind 1 where two owners share a link is reported once, at the link they both replace (D-M1-18)', () => {
+  const repo = seedRepo('X\nY\n');
+  mintIn(repo, 'dev', 'A', '2', 'R1\nY\n');
+  forkStream(repo, 'dev', 'C');
+  mintIn(repo, 'dev', 'B', '3', 'R2\nY\n');
+  mintIn(repo, 'C', 'C', '4', 'R3\nY\n');
+  assert.equal(carry(repo, 'dev', 'C').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'R2\nR3\nY\n');
+  // Both replace L:A:0 directly; they also own X's slot through L:A:0, but meet at L:A:0 first.
+  assert.deepEqual(snagRows(view), [[1, 'L:A:0', ['B', 'C'], [['B', 'R2\n'], ['C', 'R3\n']]]]);
+});
+
+test('M1-33 kind 1 through a chain ends at a pulled link (D-M1-15): pull A and R2 no longer reaches X; only the dangling link (kind 4)', () => {
+  const repo = seedRepo('X\nY\n');
+  forkStream(repo, 'dev', 'C');
+  mintIn(repo, 'dev', 'A', '2', 'R1\nY\n');
+  mintIn(repo, 'dev', 'B', '3', 'R2\nY\n');
+  mintIn(repo, 'C', 'C', '4', 'R3\nY\n');
+  assert.equal(carry(repo, 'dev', 'C').ok, true);
+  assert.equal(pull(repo, 'dev', 'A').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.deepEqual(view.snags.map((snag) => [snag.kind, snag.spot]), [[4, 'L:A:0']]);
 });
 
 const MINT_V1_VECTOR_HASH = 'sha256:cb1d7a82d0a9cfd559f382a479c64855743b0d0175e89be7ecd6a3df9ac4771c';
