@@ -3,7 +3,7 @@
 draft_by: change-impact
 status: draft, box-only. Companion to kawanagare-m3-spec-v6.md section A and slice S1.
 source_files: evidence/canon-vectors.json (authoritative), evidence/canon-reference.mjs, evidence/canon-reference.py, evidence/canon-vectors-check.mjs
-verified: JS reference and an independent Python implementation agree on every vector below (see "Verification"). The m3 engine has no canonicalizer to check against.
+verified: JS reference and an independent Python implementation agree on every vector below (see "Verification"). The m3 engine canonicalizer `m3/canon.mjs` is checked against these vectors by `m3/canon.test.mjs` T77.
 
 ## Reading the tables
 - `input` is raw JSON text. `<U+XXXX>` marks a character shown by code point because it is invisible or combining. Bytes are UTF-8, lowercase hex.
@@ -116,4 +116,4 @@ JS `JSON.stringify` differs from this contract and MUST NOT be used as the canon
 ## 4. Verification
 - `node evidence/canon-vectors-check.mjs` runs all sections against the JS reference, then runs `evidence/canon-reference.py` and compares all hashes. Result at the time of writing: JS and Python both report 0 failures (23 canonical, 28 refusals, 6 hashes; 17 in-memory refusals JS only).
 - The three sha256 values for H01, H02 and H03 were also computed with `sha256sum` on the hand-typed canonical text.
-- **Engine check:** `m3/` at the read-only source has no canonicalizer or `hashOf` (grep found none; it uses `JSON.stringify` only inside a test helper). So there is nothing to mismatch. S1 creates `m3/canon.mjs`; S1 passes when it matches this file. The engine's own default `Array.sort()` on ids is UTF-16 code unit order, consistent with the key order chosen here.
+- **Engine check:** checked by `m3/canon.test.mjs` T77 (V01-V23, R01-R28, A01-A17, H01-H06) against `m3/canon.mjs`. Historical: when this file was written, `m3/` had no canonicalizer; S1 added it. The engine's own default `Array.sort()` on ids is UTF-16 code unit order, consistent with the key order chosen here.

@@ -14,7 +14,8 @@ Git and GitHub are only an export of what Kawa already knows. The product is sti
 
 ## Specs & Try It Now (for Bots & Humans)
 
-- [docs/kawanagare-m3-spec-v4.md](docs/kawanagare-m3-spec-v4.md) — current M3 weave, pool, and conflict-management architecture proposal.
+- [docs/kawanagare-m3-spec-v6.md](docs/kawanagare-m3-spec-v6.md) — current M3 weave, pool, and conflict-management spec draft. The `m3/` engine is tested against v6.
+- [docs/kawanagare-m3-spec-v4.md](docs/kawanagare-m3-spec-v4.md) — superseded by v6. Kept as history; do not build against it.
 - [m3/](m3/) — zero-dependency M3 reference engine and test suite. Node 20 or newer, no install:
 
   ```
@@ -26,7 +27,7 @@ Git and GitHub are only an export of what Kawa already knows. The product is sti
 
 ## Repository layout
 
-- [`m3/`](m3/) — current. The weave, pools, and the flow log are the source of truth. Git is an export only. See [docs/kawanagare-m3-spec-v4.md](docs/kawanagare-m3-spec-v4.md).
+- [`m3/`](m3/) — current. The weave, pools, and the flow log are the source of truth. Git is an export only. See [docs/kawanagare-m3-spec-v6.md](docs/kawanagare-m3-spec-v6.md).
 - [`legacy/m1/`](legacy/m1/) — retired M1 git-native CLI, kept for reference. It is not maintained and it is not in CI.
 
 ## Contributing

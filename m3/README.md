@@ -1,6 +1,6 @@
 # M3 reference engine
 
-A zero-dependency model of the [M3 architecture proposal](../docs/kawanagare-m3-spec-v4.md): line weave, pools, snags, rafts, and the flow log. It is not the retired M1 CLI in [`legacy/m1/`](../legacy/m1/). It does not use that directory's `package.json`, `src/`, or `test/`.
+A zero-dependency model of the [M3 spec v6 draft](../docs/kawanagare-m3-spec-v6.md): line weave, pools, snags, rafts, and the flow log. It is not the retired M1 CLI in [`legacy/m1/`](../legacy/m1/). It does not use that directory's `package.json`, `src/`, or `test/`.
 
 Bots are the users this model is built for. `assemble` is how you simulate a carry, a pull, or a restore before you commit to it.
 
@@ -26,6 +26,7 @@ node m3/demo.mjs
 - Raft carry (G-41, `raft.test.mjs`): same refusal codes, order and waiver rule as a single-move carry; problem objects carry `needs_report`, `notices` and, for `parent_pool_missing`, `parent_move_id` and `child_node_id`; a landed raft reports the waived-edge `needs_derived_missing` notice.
 - Kind 5 same-move exemption (`kind5.test.mjs`): a pure mid-file delete of B in A,B,C views `a\nc\n` and exports; a later insert anchored on B is still kind 5 (T07).
 - mint-v1 (`mint.test.mjs`, G-49): `mintScript` turns a before-view and after bytes into line records and switch-offs. Deletions-first LCS after prefix/suffix trim; modify = `off` + a line that `replaces`; ids `L:<move>:<n>`; a fixed output hash (T-W09); seeded fuzz that every minted view reads back byte for byte. Replacement chains keep the first line's slot (D-M1-08). Sequential edits do not snag: a replacing or switching-off move whose `saw` lists the other move is exempt from kind 3 / kind 5; concurrent edits still snag (D-M1-12), including through replacement chains (D-M1-13). Kind 1 follows replacement chains (D-M1-18), and delete vs modify of one line by two moves that did not see each other is kind 1 (D-M1-17, G-61). A seeded two-author fuzz checks every snag against the rules and both arrival orders.
+- Review fixes at 03b8202 (`review.test.mjs`, RV-*): one deterministic active resolution set (D-M1-19); resolution spot through replacement chains (D-M1-20); an active resolution settles the deleters it lists (D-M1-21); locale-free exact `order_key` comparison (D-M1-22); snag report order by spec v6 4.3 (D-M1-23); withNeeds pool checks for the whole group (H3); lock covers `attrOff` (H4); raft carry refuses a bad signature (H5); a deleter side is never twin (L1).
 - Mixed CRLF/LF bytes, redaction tombstones, locks, empty-pool `.kawa-keep`, and path checks (segment compare, so `wt2` is not inside `wt`) that do not touch the real disk.
 
 ## Layout

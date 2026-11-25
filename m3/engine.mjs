@@ -305,6 +305,8 @@ function touchedNodes(script, idx) {
   }
   for (const attr of script.attributes) nodes.add(attr.node);
   for (const lineId of script.off) if (idx.lines[lineId]) nodes.add(idx.lines[lineId].node);
+  // Switching off an attribute touches its node (spec 4.6, H4).
+  for (const attrId of script.attrOff) if (idx.attrs[attrId]) nodes.add(idx.attrs[attrId].node);
   for (const entryId of script.entryOff) {
     const entry = idx.entries[entryId];
     if (!entry) continue;
@@ -524,11 +526,15 @@ function planCarry(repo, streamName, moveId, opts = {}) {
   const analysis = analyzeNeeds(repo, moveId, on, waiverFor);
   const groupProblems = analysis.problems;
   const landList = withNeeds ? [...on, ...analysis.proposed] : [...on, moveId];
-  const landProblems = withNeeds ? groupProblems : poolProblems(repo, moveId, landList);
+  // withNeeds lands the whole closure, so every member's pool preconditions are checked
+  // against the landed set (spec 4.9, the same per-member check carryRaft makes; H3).
+  const landProblems = withNeeds
+    ? analysis.proposed.flatMap((id) => poolProblems(repo, id, landList))
+    : poolProblems(repo, moveId, landList);
   const parentMissing = landProblems
     .filter((problem) => problem.code === 'parent_unreachable')
     .map((problem) => {
-      const entry = script.entries.find((item) => item.id === problem.entry);
+      const entry = idx.entries[problem.entry];
       return {
         node_id: problem.pool,
         parent_move_id: idx.nodes[problem.pool]?.addedBy ?? null,
@@ -734,7 +740,8 @@ export function carryRaft(repo, streamName, raftId) {
   const RANK = [CODE.waiver_invalid, CODE.parent_pool_missing, CODE.needs_derived_missing, CODE.entry_not_visible, 'script_missing'];
   for (const moveId of todo) {
     const script = repo.scripts[moveId];
-    if (!script) {
+    // A script that fails its signature is absent (spec 6, "Move scripts union"), as in a single carry (H5).
+    if (!script || script.signature === 'bad') {
       problems.push({ move: moveId, code: 'script_missing' });
       continue;
     }
@@ -933,7 +940,7 @@ export function computeView(repo, moveList, policy = repo.policy, scriptOverlay 
       continue;
     }
     if (!sc.resolves) continue;
-    const reason = dormantReason(sc, moveList, idx, scripts);
+    const reason = dormantReason(sc, moveList, idx, scripts, active);
     if (reason) {
       notices.push({
         kind: 'dormant_resolution',

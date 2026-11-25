@@ -4,7 +4,7 @@
  * A second walk reports entries whose pool cannot be reached.
  */
 
-import { entryVisible, attrVisible, cmpLine } from './model.mjs';
+import { entryVisible, attrVisible, cmpCodeUnit, cmpLine } from './model.mjs';
 import { DEFAULT_POLICY, forbiddenName, joinRepoPath, nameKey, sameName } from './names.mjs';
 
 export function poolView(idx, scripts, moveList, activeRes, policy, root) {
@@ -145,7 +145,9 @@ function attributeSnags(visibleAttrs, scripts) {
     }
     if (byMove.size < 2) continue;
     const [node, attrKey] = key.split('\0');
-    const moves = [...byMove.keys()].sort((a, b) => cmpLine(scripts, { addedBy: a, seq: 0, id: a }, { addedBy: b, seq: 0, id: b }));
+    // Report order (D-M1-23): `sides` by order_key then move id, `moves` by move id.
+    const sideMoves = [...byMove.keys()].sort((a, b) => cmpLine(scripts, { addedBy: a, seq: 0, id: a }, { addedBy: b, seq: 0, id: b }));
+    const moves = sideMoves.slice().sort(cmpCodeUnit);
     snags.push({
       kind: 10,
       code: 'attribute',
@@ -154,7 +156,7 @@ function attributeSnags(visibleAttrs, scripts) {
       node,
       key: attrKey,
       moves,
-      sides: moves.map((moveId) => ({
+      sides: sideMoves.map((moveId) => ({
         move: moveId,
         values: byMove.get(moveId).map((attr) => attr.value),
       })),
@@ -170,7 +172,7 @@ function walk(pool, path, byPool, idx, reachable, files, directories, emptyDirs,
   stack.add(pool);
   const node = idx.nodes[pool];
   if (node && node.kind === 'pool') directories.push({ path, node: pool });
-  const children = (byPool.get(pool) || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const children = (byPool.get(pool) || []).slice().sort((a, b) => cmpCodeUnit(a.name, b.name));
   if (path && children.length === 0) emptyDirs.push({ path, node: pool });
   for (const entry of children) {
     const childPath = joinRepoPath(path, entry.name);

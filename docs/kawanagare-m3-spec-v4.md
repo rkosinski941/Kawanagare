@@ -1,6 +1,6 @@
 # KawaNagare M3 Architecture & Conflict Proposal v4
 
-**Status:** active proposal / reference model under test. This is not an approved build plan for the M1 CLI. Nothing in M1 switches over to this model until Rich approves it.
+**Status:** superseded by [spec v6](kawanagare-m3-spec-v6.md). Kept as history. The `m3/` engine follows v6, not this file: v6 replaced intent `kind` with `purpose` (the engine refuses `kind` as `unknown_field`), and a kanosei pick never pulls the other members (v6-07). Original status line: active proposal / reference model under test. This is not an approved build plan for the M1 CLI. Nothing in M1 switches over to this model until Rich approves it.
 
 **What this document is.** The architecture for streams, moves, the line weave, pools, and conflict management. Bots are the primary users. The runnable model is [`m3/`](../m3/): `node --test m3/` and `node m3/demo.mjs`, with Node 20+ and no install step.
 
