@@ -524,11 +524,15 @@ function planCarry(repo, streamName, moveId, opts = {}) {
   const analysis = analyzeNeeds(repo, moveId, on, waiverFor);
   const groupProblems = analysis.problems;
   const landList = withNeeds ? [...on, ...analysis.proposed] : [...on, moveId];
-  const landProblems = withNeeds ? groupProblems : poolProblems(repo, moveId, landList);
+  // withNeeds lands the whole closure, so every member's pool preconditions are checked
+  // against the landed set (spec 4.9, the same per-member check carryRaft makes; H3).
+  const landProblems = withNeeds
+    ? analysis.proposed.flatMap((id) => poolProblems(repo, id, landList))
+    : poolProblems(repo, moveId, landList);
   const parentMissing = landProblems
     .filter((problem) => problem.code === 'parent_unreachable')
     .map((problem) => {
-      const entry = script.entries.find((item) => item.id === problem.entry);
+      const entry = idx.entries[problem.entry];
       return {
         node_id: problem.pool,
         parent_move_id: idx.nodes[problem.pool]?.addedBy ?? null,

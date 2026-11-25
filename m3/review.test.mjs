@@ -202,3 +202,40 @@ test('RV-M4 pool entries are walked in UTF-16 name order (B before a)', () => {
   assert.deepEqual(inspect(repo, 'dev').files.map((file) => file.path), ['B', 'a']);
 });
 
+// ---------------------------------------------------------------- H3 withNeeds applies pool preconditions to the closure
+
+function poolRepo() {
+  const repo = createRepo();
+  assert.equal(checkin(repo, 'dev', withIntent({
+    id: 'seed', orderKey: '1',
+    nodes: [{ id: 'root', kind: 'pool', root: true }, { id: 'src', kind: 'pool' }],
+    entries: [{ id: 'Esrc', pool: 'root', node: 'src', name: 'src' }],
+  })).ok, true);
+  assert.equal(checkin(repo, 'dev', withIntent({
+    id: 'P', orderKey: '2', nodes: [{ id: 'sub', kind: 'pool' }], entries: [{ id: 'Esub', pool: 'src', node: 'sub', name: 'sub' }],
+  })).ok, true);
+  assert.equal(checkin(repo, 'dev', withIntent({ id: 'D', orderKey: '3', entryOff: ['Esub'] }, { targets: [{ node: 'sub' }] })).ok, true);
+  saveScript(repo, withIntent({
+    id: 'C', orderKey: '4', nodes: [{ id: 'rowc', kind: 'file' }], entries: [{ id: 'Erow', pool: 'sub', node: 'rowc', name: 'row.c' }],
+    lines: [{ id: 'Lc', node: 'rowc', bytes: 'int row;\n', after: START, before: END }],
+  }));
+  saveScript(repo, withIntent({
+    id: 'R', orderKey: '5', lines: [{ id: 'Lr', node: 'rowc', bytes: 'int r;\n', after: 'Lc', before: END }],
+  }));
+  return repo;
+}
+
+test('RV-H3 carry withNeeds refuses parent_pool_missing when a closure member\'s parent pool is unreachable; nothing lands', () => {
+  const repo = poolRepo();
+  const single = carry(repo, 'dev', 'C');
+  assert.equal(single.code, 'parent_pool_missing');
+  const before = movesOn(repo, 'dev');
+  const res = carry(repo, 'dev', 'R', { withNeeds: true });
+  assert.equal(res.ok, false);
+  assert.equal(res.code, 'parent_pool_missing');
+  assert.equal(res.node_id, 'sub');
+  assert.equal(res.parent_move_id, 'P');
+  assert.equal(res.parent_pool_missing[0].child_node_id, 'rowc');
+  assert.deepEqual(movesOn(repo, 'dev'), before);
+});
+
