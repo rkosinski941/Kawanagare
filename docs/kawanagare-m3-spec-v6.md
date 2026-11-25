@@ -157,6 +157,7 @@ lines:
 2. A new line sits strictly between its resolved `after` and its resolved `before`.
 3. A replacement occupies the slot of the line it replaces. Its place comes from that line's anchors, not from a second copy of the text.
    Chain (D-M1-08): when the replaced line is itself a replacement, the slot is that of the first line in the chain; a switched-off replacement with no visible successor holds the slot as the tombstone. A line whose maker is off ends the chain (D-M1-15).
+   Delete vs modify (D-M1-17, G-61): when one on-move's visible replacement holds a line's slot (directly or through the chain) and another on-move switches that line off with no replacement of its own, and neither move's `saw` lists the other, that is snag kind 1 (§4.2). The replacement stays visible. If either move's `saw` lists the other, the edit was sequential and it is not a snag.
 4. If the `after` or `before` line was replaced, the anchor resolves to the visible replacement (or replacements) in that slot. The insert stays in the same gap. Replacing the right-hand line does not throw the insert out of the gap, and it does not by itself raise a snag.
 5. If the anchor line was switched off and nothing replaces it, the line remains in the order graph as a **tombstone**: neighbors keep their places, the tombstone is omitted from the visible text, and the anchor is snag kind 5.
    Exception (D-K5-01): a line minted by the **same move** as its switched-off `after` or `before` anchor (that anchor's original neighbor) is not kind 5. A pure mid-file delete of B in seed lines A,B,C views `a\nc\n` and exports. A line from a later move that anchors on the switched-off line is still kind 5 (T07). A lost `replaces` anchor is never exempt.
@@ -244,7 +245,7 @@ Two bots inserting into different gaps of the same file do not snag. Two bots re
 
 | # | Snag | When it happens |
 |---|---|---|
-| 1 | **Same line replaced twice** | Two or more on-moves each put a replacement in the same line's slot. |
+| 1 | **Same line replaced twice** | Two or more on-moves each put a replacement in the same line's slot; or one on-move puts a replacement in the slot and another switches the line off with no replacement, neither listing the other in `saw` (delete vs modify, D-M1-17). |
 | 2 | **Same-gap inserts** | Two or more on-moves add lines in the same gap (same node, same `after`, same `before`). |
 | 3 | **Insert beside a replaced line** | An insert's `after` anchor is a line that another on-move replaces, and the inserting move did not see that replacement. See below. |
 | 4 | **Missing need** | An on-move anchors on, replaces, or switches off a line whose maker is off. If the maker's script has not arrived, the move is **waiting** (a notice), not this snag. |
@@ -260,6 +261,12 @@ Two bots inserting into different gaps of the same file do not snag. Two bots re
 **Kind 1, precisely.**
 
 - Through a chain (§2 rule 3, D-M1-18): a visible replacement holds every slot up its `replaces` chain. Two visible replacements from different on-moves that reach one slot through different links are kind 1 at that slot. Replacements that reach a slot through a shared link meet at that link first; kind 1 is reported there, once. The chain walk is the §2 rule 3 walk and ends where §2 rule 3 ends it.
+- Delete vs modify (D-M1-17, G-61): a line is switched off by an on-move that has no line replacing it (the deleter), and a visible replacement from another on-move holds the line's slot, directly or through a chain. Kind 1 fires at that line when neither the deleter's `saw` lists the owner's move nor the owner's move's `saw` lists the deleter. The replacement stays visible. Arrival order does not matter.
+- Through a chain, the visible owner decides (same rule as kind 3, D-M1-13): an intermediate link whose maker did not see the deleter does not raise kind 1 when the visible owner's move saw it.
+- A move whose `resolves.inputs` lists the deleter or the owner's move, while that resolution is active, counts as having seen it for this check (§4.4). A resolution that keeps the replacement, or one that switches it off, ends the snag.
+- A deleter is a side with `lines: []` and `bytes: ""`. A snag with a deleter side is never twin. When the same slot also has two replacements, it is still one kind 1 snag listing every side.
+- Not kind 1: replacing a line and then deleting the replacement in a later move that saw it (the slot is empty; kind 5 rules apply to anchors). A deletion with no visible replacement in the slot.
+- Known limit (G-63): mint-v1 `saw` lists the makers of visible lines (§2 minting). A move that only switched lines off has no visible line, so a later minted edit of the surviving replacement does not list it, and the snag stays until a resolution, a `saw` that names the deleter, or a switch-off of the replacement.
 
 **Kind 3, precisely.** This is the ambiguous case, not every neighbor of a replaced line.
 

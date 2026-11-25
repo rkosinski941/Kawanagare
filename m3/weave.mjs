@@ -37,7 +37,7 @@ export function weaveFiles(idx, scripts, moveList, activeRes, redactions) {
   // line it replaces (spec 2 rule 3). When that line is itself a replacement that is no
   // longer visible, the slot is the older line's slot too: walk the `replaces` chain up
   // through lines that are not visible and stop at the first visible one. Ordering and
-  // tombstones use these owners; snag rules keep the direct `replacers` map.
+  // tombstones use these owners; kind 3 and kind 5 read them; kind 1 repeats the walk (D-M1-18).
   const visibleIds = new Set(visible.map((v) => v.id));
   // A chain link counts only while its maker is on and live in this set (D-M1-15): a
   // replacement of a line from a pulled or dormant move occupies that line's slot, but
@@ -255,6 +255,16 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots,
     if (!replacedBy.has(line.replaces)) replacedBy.set(line.replaces, []);
     replacedBy.get(line.replaces).push(line.id);
   }
+  // `saw` as the snag rules read it. A move with no `saw` saw nothing (G-60). For kind 1
+  // (D-M1-17) an active resolution also counts as having seen its `inputs`.
+  const sawOf = (moveId) => scripts[moveId]?.saw || [];
+  const sawForSlot = (moveId) => {
+    const sc = scripts[moveId];
+    const inputs = sc?.resolves && activeRes.has(moveId) ? sc.resolves.inputs || [] : [];
+    return [...sawOf(moveId), ...inputs];
+  };
+  const seenEither = (a, b) => sawForSlot(a).includes(b) || sawForSlot(b).includes(a);
+
   // Kind 1 follows replacement chains (D-M1-18). Each visible replacement owns every slot
   // up its `replaces` chain (spec 2 rule 3; same walk as the D-M1-08 slot map, ended by
   // D-M1-15). `via` is the link the owner reached the slot through (the owner itself when
@@ -282,7 +292,11 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots,
   for (const slot of slotOrder) {
     const entries = slotEntries.get(slot);
     const replacedTwice = entries.some((a) => entries.some((b) => a.via !== b.via && a.line.addedBy !== b.line.addedBy));
-    const deleters = [];
+    // Delete vs modify (D-M1-17, G-61): an on-move that switches the slot's line off with
+    // no replacement of its own, while a visible replacement holds the slot, contests the
+    // slot with each owner's move unless either move's `saw` lists the other.
+    const replacing = new Set((replacedBy.get(slot) || []).map((id) => idx.lines[id].addedBy));
+    const deleters = liveOff(slot).filter((moveId) => !replacing.has(moveId) && entries.some((entry) => entry.line.addedBy !== moveId && !seenEither(moveId, entry.line.addedBy)));
     if (!replacedTwice && !deleters.length) continue;
     const owners = entries.map((entry) => entry.line);
     const byMove = new Map();
