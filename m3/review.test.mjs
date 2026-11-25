@@ -93,3 +93,41 @@ test('RV-H2 a resolution whose saw is the lines of a chain kind 1 snag becomes a
   assert.deepEqual(view.snags, []);
 });
 
+// ---------------------------------------------------------------- resolution, then a normal mint edit (D-M1-21)
+
+function resolvedDeleteVsModify() {
+  const repo = seedRepo('X\nY\n');
+  forkStream(repo, 'dev', 'B');
+  mintIn(repo, 'dev', 'A', '2', 'X2\nY\n');
+  mintIn(repo, 'B', 'B', '3', 'Y\n');
+  assert.equal(carry(repo, 'dev', 'B').ok, true);
+  handIn(repo, 'dev', {
+    id: 'R', orderKey: '4', off: ['L:A:0'],
+    resolves: { kind: 'same_slot', inputs: ['A', 'B'], absent: [], contested: ['L:seed:0'], saw: ['L:A:0'], decision: 'keep_one' },
+    lines: [{ id: 'RX', node: FILE, bytes: 'X2\n', after: START, before: 'L:seed:1', replaces: 'L:seed:0' }],
+  });
+  assert.deepEqual(inspect(repo, 'dev').snags, []);
+  return repo;
+}
+
+test('RV-RES a normal mint edit of an active resolution\'s line does not bring back the delete-vs-modify kind 1 it settled', () => {
+  const repo = resolvedDeleteVsModify();
+  const m = mintIn(repo, 'dev', 'M', '5', 'X3\nY\n');
+  assert.deepEqual(m.saw, ['R', 'seed']);
+  assert.equal(m.lines[0].replaces, 'RX');
+  const view = inspect(repo, 'dev');
+  assert.equal(fileOf(view).bytes, 'X3\nY\n');
+  assert.deepEqual(dormant(view), []);
+  assert.deepEqual(view.snags, []);
+});
+
+test('RV-RES control: a new unseen deleter of the settled line is still kind 1 (only the resolution\'s inputs are settled)', () => {
+  const repo = resolvedDeleteVsModify();
+  forkStream(repo, 'dev', 'D');
+  mintIn(repo, 'dev', 'M', '5', 'X3\nY\n');
+  handIn(repo, 'D', { id: 'D2', orderKey: '6', saw: ['seed'], off: ['L:seed:0'] });
+  assert.equal(carry(repo, 'dev', 'D2').ok, true);
+  const view = inspect(repo, 'dev');
+  assert.deepEqual(view.snags.map((s) => [s.kind, s.spot, s.moves.slice().sort()]), [[1, 'L:seed:0', ['D2', 'M']]]);
+});
+

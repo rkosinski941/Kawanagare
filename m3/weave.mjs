@@ -264,6 +264,20 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots,
     return [...sawOf(moveId), ...inputs];
   };
   const seenEither = (a, b) => sawForSlot(a).includes(b) || sawForSlot(b).includes(a);
+  // A deleter is settled at a slot (D-M1-21) while an active resolution lists it in
+  // `resolves.inputs` and lists the slot in `resolves.contested`. A later edit of the
+  // resolution's line (a mint-v1 `saw` that cannot list a pure deleter, G-63) does not bring
+  // the settled delete-vs-modify kind 1 back. A deleter the resolution did not list is not settled.
+  const settledAt = new Map();
+  for (const moveId of moveList) {
+    const sc = scripts[moveId];
+    if (!sc?.resolves || !activeRes.has(moveId)) continue;
+    for (const slot of sc.resolves.contested || []) {
+      if (!settledAt.has(slot)) settledAt.set(slot, new Set());
+      for (const input of sc.resolves.inputs || []) settledAt.get(slot).add(input);
+    }
+  }
+  const settled = (moveId, slot) => !!settledAt.get(slot)?.has(moveId);
 
   // Kind 1 follows replacement chains (D-M1-18). Each visible replacement owns every slot
   // up its `replaces` chain (spec 2 rule 3; same walk as the D-M1-08 slot map, ended by
@@ -296,7 +310,7 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots,
     // no replacement of its own, while a visible replacement holds the slot, contests the
     // slot with each owner's move unless either move's `saw` lists the other.
     const replacing = new Set((replacedBy.get(slot) || []).map((id) => idx.lines[id].addedBy));
-    const deleters = liveOff(slot).filter((moveId) => !replacing.has(moveId) && entries.some((entry) => entry.line.addedBy !== moveId && !seenEither(moveId, entry.line.addedBy)));
+    const deleters = liveOff(slot).filter((moveId) => !replacing.has(moveId) && !settled(moveId, slot) && entries.some((entry) => entry.line.addedBy !== moveId && !seenEither(moveId, entry.line.addedBy)));
     if (!replacedTwice && !deleters.length) continue;
     const owners = entries.map((entry) => entry.line);
     const byMove = new Map();
