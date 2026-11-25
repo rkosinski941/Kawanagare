@@ -714,7 +714,7 @@ assemble also reads history: `kawa assemble <path> --stream <stream> --at <event
 
 **Machine fields.** Per move, `in_play: true|false` is the one canonical field for on/off. "on" and "off" are display words only (an alias table is in §0), and `on_set` in `view_hash` is the sorted list of ids of moves with `in_play: true`. Need edges are `needs` (forward) and `needed_by` (reverse); the word `linked` is not a machine field.
 
-The reference engine's `assemble` is that operation for bytes and snags. A snapshot of the repo before and after is identical. Intent-block reports, including per-member kanosei `accept` reports, are not emitted by the reference engine yet.
+The reference engine's `assemble` is that operation for bytes and snags. A snapshot of the repo before and after is identical. `assemble` returns `intent_reports`, `ops_derived` and `ops_derived_partial` for the moves in the view (S2). Per-member kanosei `accept` reports are not emitted by the reference engine yet.
 
 ## 5. Worked example
 
@@ -971,7 +971,7 @@ All v6 hashes use one canonical form so every site and every language gets the s
 
 **Hash.** `canonJson(value)` is the string of rules 1 to 9. `canonBytes` is its UTF-8 encoding. `hashOf(value) = "sha256:" + lowercase hex(sha256(canonBytes))`. `hashOf({a:1,b:[1,2]}) = "sha256:8baa73198470c7bb4c3ce142a8fd651affc0310d878bb9bd159e37a573fb4874"`.
 
-The reference engine needs only `node:crypto` for the hash. At the time of v6 the engine in `m3/` has no canonicalizer; S1 adds it (`m3/canon.mjs`) and passes when it matches canonical-json-vectors.md.
+The reference engine needs only `node:crypto` for the hash. Historical: when v6 was drafted the engine in `m3/` had no canonicalizer. S1 added `m3/canon.mjs`; `m3/canon.test.mjs` T77 checks it against the vectors file.
 
 ## 13. Tome: a named immutable stream base (M4-DEFERRED, pending Rich)
 
