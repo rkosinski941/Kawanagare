@@ -305,6 +305,8 @@ function touchedNodes(script, idx) {
   }
   for (const attr of script.attributes) nodes.add(attr.node);
   for (const lineId of script.off) if (idx.lines[lineId]) nodes.add(idx.lines[lineId].node);
+  // Switching off an attribute touches its node (spec 4.6, H4).
+  for (const attrId of script.attrOff) if (idx.attrs[attrId]) nodes.add(idx.attrs[attrId].node);
   for (const entryId of script.entryOff) {
     const entry = idx.entries[entryId];
     if (!entry) continue;

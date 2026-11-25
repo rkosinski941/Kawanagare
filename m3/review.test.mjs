@@ -239,6 +239,23 @@ test('RV-H3 carry withNeeds refuses parent_pool_missing when a closure member\'s
   assert.deepEqual(movesOn(repo, 'dev'), before);
 });
 
+// ---------------------------------------------------------------- H4 a node lock covers attrOff
+
+test('RV-H4 a lock on node f refuses a check-in whose only record switches off an attribute of f', () => {
+  const repo = createRepo();
+  assert.equal(checkin(repo, 'dev', withIntent({
+    id: 'seed', orderKey: '1',
+    nodes: [{ id: 'root', kind: 'pool', root: true }, { id: 'f', kind: 'file' }],
+    entries: [{ id: 'Ef', pool: 'root', node: 'f', name: 'f.txt' }],
+    attributes: [{ id: 'm1', node: 'f', key: 'mode', value: 'rw' }],
+  })).ok, true);
+  lock(repo, 'dev', 'f');
+  const res = checkin(repo, 'dev', withIntent({ id: 'x', orderKey: '2', attrOff: ['m1'] }, { targets: [{ node: 'f' }] }));
+  assert.equal(res.ok, false);
+  assert.match(res.message, /f is locked/);
+  assert.equal(inspect(repo, 'dev').files[0].meta.mode, 'rw');
+});
+
 // ---------------------------------------------------------------- H5 raft carry treats a bad signature as a missing script
 
 test('RV-H5 carryRaft of a member whose signature is bad is refused script_missing and appends nothing', () => {
