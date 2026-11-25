@@ -334,7 +334,8 @@ function lineSnags(idx, scripts, moveList, activeRes, visible, replacers, slots,
     snags.push({
       kind: 1,
       code: 'same_slot',
-      twin: sides.every((side) => side.bytes === sides[0].bytes),
+      // A deleter side (lines []) is never twin (spec 4.2), even beside an empty replacement (L1).
+      twin: sides.every((side) => side.lines.length > 0 && side.bytes === sides[0].bytes),
       spot: slot,
       node: owners[0].node,
       moves,

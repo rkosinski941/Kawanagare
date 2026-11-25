@@ -269,3 +269,16 @@ test('RV-H5 carryRaft of a member whose signature is bad is refused script_missi
   assert.deepEqual(movesOn(repo, 'dev'), ['seed']);
 });
 
+// ---------------------------------------------------------------- L1 a deleter side is never twin
+
+test('RV-L1 kind 1 with a deleter side and an empty-bytes replacement is not twin', () => {
+  const repo = seedRepo('X\nY\n');
+  forkStream(repo, 'dev', 'B');
+  handIn(repo, 'dev', { id: 'A', orderKey: '2', saw: ['seed'], off: ['L:seed:0'], lines: [{ id: 'La', node: FILE, bytes: '', after: START, before: 'L:seed:1', replaces: 'L:seed:0' }] });
+  handIn(repo, 'B', { id: 'B', orderKey: '3', saw: ['seed'], off: ['L:seed:0'] });
+  assert.equal(carry(repo, 'dev', 'B').ok, true);
+  const snag = inspect(repo, 'dev').snags[0];
+  assert.equal(snag.kind, 1);
+  assert.equal(snag.twin, false);
+  assert.deepEqual(snag.sides.map((side) => [side.move, side.lines]), [['A', ['La']], ['B', []]]);
+});
