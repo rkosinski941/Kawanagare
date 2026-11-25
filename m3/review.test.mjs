@@ -239,3 +239,16 @@ test('RV-H3 carry withNeeds refuses parent_pool_missing when a closure member\'s
   assert.deepEqual(movesOn(repo, 'dev'), before);
 });
 
+// ---------------------------------------------------------------- H5 raft carry treats a bad signature as a missing script
+
+test('RV-H5 carryRaft of a member whose signature is bad is refused script_missing and appends nothing', () => {
+  const repo = seedRepo('X\n');
+  saveScript(repo, withIntent({ id: 'bad', orderKey: '2', signature: 'bad', lines: [{ id: 'Lbad', node: FILE, bytes: 'b\n', after: 'L:seed:0', before: END }] }));
+  assert.equal(defineRaft(repo, { id: 'raft.bad', members: ['bad'] }).ok, true);
+  assert.equal(carry(repo, 'dev', 'bad').ok, false);
+  const res = carryRaft(repo, 'dev', 'raft.bad');
+  assert.equal(res.ok, false);
+  assert.equal(res.code, 'script_missing');
+  assert.deepEqual(movesOn(repo, 'dev'), ['seed']);
+});
+

@@ -738,7 +738,8 @@ export function carryRaft(repo, streamName, raftId) {
   const RANK = [CODE.waiver_invalid, CODE.parent_pool_missing, CODE.needs_derived_missing, CODE.entry_not_visible, 'script_missing'];
   for (const moveId of todo) {
     const script = repo.scripts[moveId];
-    if (!script) {
+    // A script that fails its signature is absent (spec 6, "Move scripts union"), as in a single carry (H5).
+    if (!script || script.signature === 'bad') {
       problems.push({ move: moveId, code: 'script_missing' });
       continue;
     }
